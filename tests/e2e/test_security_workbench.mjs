@@ -51,7 +51,7 @@ const jsxModule = uri(
   'export function jsx(type,props,key){ return {type,props:props||{},key} }; export const jsxs=jsx;'
 )
 const reactModule = uri(
-  'export const useState = v => [globalThis.__securityTest.states?.length ? globalThis.__securityTest.states.shift() : typeof v === "function" ? v() : v, () => {}]; export const useEffect = () => {}; export const useRef=v=>({current:v});'
+  'export const useState = v => [globalThis.__securityTest.states?.length ? globalThis.__securityTest.states.shift() : typeof v === "function" ? v() : v, value => {globalThis.__securityTest.stateWrites?.push(value)}]; export const useEffect = fn => {if(globalThis.__securityTest.effects)globalThis.__securityTest.effects.push(fn)}; export const useRef=v=>({current:v});'
 )
 const sdkModule = uri(`
 const e=globalThis.__securityTest;
@@ -279,6 +279,12 @@ test('coverage keeps missing work and zero-finding uncertainty visible', () => {
   assert.match(output, /Worker missing/)
   assert.match(output, /Zero findings does not establish/)
 })
+test('long gap lists collapse behind a count but stay readable', () => {
+  const gaps = Array.from({ length: 266 }, (_, i) => `Control ${i} deferred`)
+  const output = render(plugin.Coverage({ data: { completeness: 'partial', files: { reviewed: 0, total: 1 }, gaps } }))
+  assert.match(output, /266 coverage gaps recorded/)
+  assert.match(output, /Control 265 deferred/)
+})
 test('progress never invents completion and mounts aria-live stepper', () => {
   const node = plugin.Progress({ scan: {} })
   assert.match(render(node), /Inventory — Not recorded/)
@@ -427,6 +433,17 @@ test('finding readback keeps the finding when it embeds scan metadata', () => {
   assert.equal(plugin.findingData(row).scanId, 'scan_nested')
   assert.equal(plugin.findingData(row).target.root, '/remote/nested')
 })
+test('finding editor restores the saved triage note on reopening', () => {
+  env.fixtures['/findings/hsf_test'].triage = { state: 'accepted_risk', note: 'Preserve owner rationale' }
+  env.effects = []
+  env.stateWrites = []
+  plugin.FindingDetail({ id: 'hsf_test', onBack() {} })
+  env.effects.forEach(effect => effect())
+  assert.ok(env.stateWrites.includes('Preserve owner rationale'))
+  delete env.effects
+  delete env.stateWrites
+})
+
 test('scan/finding events invalidate and unload removes cache', () => {
   for (const name of ['plugin.hermes-security.scan.updated', 'plugin.hermes-security.finding.updated']) {
     assert.ok(env.events.has(name))

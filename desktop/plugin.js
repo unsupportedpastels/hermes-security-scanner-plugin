@@ -432,7 +432,7 @@ export function NewScan({ open, onClose }) {
             })
           ]
         }),
-        jsx('div', {
+        jsxs('div', {
           className: 'hs-fields',
           children: [
             jsx(Field, {
@@ -527,12 +527,20 @@ export function Coverage({ data }) {
       jsx(Paragraph, {
         value: `${coverage.completeness || 'Unknown'} coverage · ${coverage.files?.reviewed ?? 'Unknown'} of ${coverage.files?.total ?? 'unknown'} files reviewed. Zero findings does not establish that a target is safe.`
       }),
-      jsx(Bullets, {
-        values: coverage.gaps,
-        empty: 'No gap statements recorded. Check the control ledger below.'
-      }),
+      // Partial scans can carry hundreds of deferred-control gaps; keep them behind a count.
+      list(coverage.gaps).length > 5
+        ? jsxs('details', {
+            children: [
+              jsx('summary', { children: `${coverage.gaps.length} coverage gaps recorded` }),
+              jsx(Bullets, { values: coverage.gaps })
+            ]
+          })
+        : jsx(Bullets, {
+            values: coverage.gaps,
+            empty: 'No gap statements recorded. Check the control ledger below.'
+          }),
       ...['owaspTop10', 'asvs'].map((key) =>
-        jsx(
+        jsxs(
           'details',
           {
             children: [
@@ -555,7 +563,7 @@ export function Coverage({ data }) {
           key
         )
       ),
-      jsx('details', {
+      jsxs('details', {
         children: [
           jsx('summary', { children: 'Detectors, workers, exclusions and deferred units' }),
           jsx('pre', {
@@ -801,7 +809,7 @@ export function ScanDetail({ id, onBack, onFinding }) {
                               children: jsx(Coverage, { data: coverage.data })
                             }),
                             active ? jsx(Progress, { scan }) : null,
-                            jsx(Section, {
+                            jsxs(Section, {
                               title: 'Target and run',
                               children: [
                                 jsx(Paragraph, {
@@ -817,7 +825,7 @@ export function ScanDetail({ id, onBack, onFinding }) {
                             }),
                             jsx(Section, {
                               title: 'Scan findings',
-                              children: jsx(Loading, {
+                              children: jsxs(Loading, {
                                 query: findings,
                                 children: [
                                   items(findings.data).length
@@ -955,7 +963,7 @@ export function Evidence({ finding: f }) {
           empty: 'No proof-gap explanation recorded. Missing evidence still limits this claim.'
         })
       }),
-      jsx(Section, {
+      jsxs(Section, {
         title: 'Validation',
         children: [
           jsx(Paragraph, {
@@ -973,7 +981,7 @@ function FindingSummary({ finding: f }) {
     children: [
       jsx(Section, { title: 'Summary', children: jsx(Paragraph, { value: f.summary }) }),
       jsx(Section, { title: 'Root cause', children: jsx(Paragraph, { value: f.rootCause }) }),
-      jsx(Section, {
+      jsxs(Section, {
         title: 'Attack path',
         children: [
           jsx(Paragraph, {
@@ -984,7 +992,7 @@ function FindingSummary({ finding: f }) {
           jsx(Bullets, { values: [...list(f.attackPath?.controls), ...list(f.attackPath?.assumptions)] })
         ]
       }),
-      jsx(Section, {
+      jsxs(Section, {
         title: 'Severity assessment',
         children: [
           jsx(Paragraph, { value: f.severity?.rationale }),
@@ -999,7 +1007,7 @@ function FindingSummary({ finding: f }) {
         title: 'Regression tests',
         children: jsx(Bullets, { values: f.remediation?.regressionTests })
       }),
-      jsx(Section, {
+      jsxs(Section, {
         title: 'Technical details',
         children: [
           jsx(Paragraph, {
@@ -1040,6 +1048,9 @@ export function FindingDetail({ id, onBack }) {
   useEffect(() => {
     setTriage(f.triage?.state || f.triageState || 'open')
   }, [id, f.triage?.state, f.triageState])
+  useEffect(() => {
+    setNote(f.triage?.note || '')
+  }, [id, f.triage?.note])
   const patch = useData(`/findings/${id}/patch`, {}, tab === 'Patch')
   const chains = useData(
     `/scans/${f.scanId || 'unavailable'}`,
@@ -1112,7 +1123,7 @@ export function FindingDetail({ id, onBack }) {
                         })
                       : jsx(Loading, {
                           query: patch,
-                          children: jsx(Section, {
+                          children: jsxs(Section, {
                             title: 'Patch preview only',
                             children: [
                               jsx(Paragraph, {
@@ -1212,7 +1223,7 @@ export function BrowserView({ kind, selected, setSelected, onFinding }) {
               placeholder: kind === 'Findings' ? 'Title, path, CWE, category or chain' : 'Repository or path'
             })
           }),
-          jsx('details', {
+          jsxs('details', {
             children: [
               jsx('summary', { className: 'hs-bar', children: 'Filters' }),
               jsx('div', {
@@ -1293,7 +1304,7 @@ export function Repositories({ onScan }) {
   return jsx('div', {
     className: 'hs-detail',
     style: { display: 'block' },
-    children: jsx(Loading, {
+    children: jsxs(Loading, {
       query: q,
       children: [
         jsx('p', {
