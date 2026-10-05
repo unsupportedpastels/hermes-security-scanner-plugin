@@ -41,7 +41,7 @@ def test_slash_grant_defaults_and_bounds():
     assert s.calls[-1] == ("mint_grant", ("s",), {
         "origins": ["https://example.test"], "actions": ["http-probe"],
         "expires_in_s": 1800, "max_requests": 20, "created_by": "user-command"})
-    assert slash(s, "authorize-validation s https://example.test --actions http-probe,local-command --minutes 240 --max-requests 200")["ok"]
+    assert slash(s, "authorize-validation s https://example.test --actions http-probe --minutes 240 --max-requests 200")["ok"]
     assert s.calls[-1][2]["expires_in_s"] == 14400
 
 
@@ -49,6 +49,8 @@ def test_slash_grant_defaults_and_bounds():
     "authorize-validation s https://example.test --minutes 241", "authorize-validation s https://example.test --minutes 0",
     "authorize-validation s https://example.test --max-requests 201", "authorize-validation s https://example.test --max-requests -1",
     "authorize-validation s https://example.test --actions shell", "authorize-validation s https://example.test --actions http-probe,",
+    "authorize-validation s https://example.test --actions local-command",
+    "authorize-validation s https://example.test --actions http-probe,local-command",
     "authorize-validation s https://example.test/path", "authorize-validation s https://user:pw@example.test"])
 def test_slash_rejects_bad_arguments(text):
     s = FakeService()
@@ -113,6 +115,10 @@ def test_cli_validation_consent_only_explicit(tmp_path, monkeypatch, capsys):
     file.write_text('{"receipts": []}')
     assert cli.main(base + ["--allow-local"]) == 3
     assert len(s.calls) == 2
+    assert cli.main(["start", "--path", "/repo", "--safety-level", "local-safe"]) == 0
+    assert "allowLocalValidation" not in s.calls[-1][2]
+    assert cli.main(["start", "--path", "/repo", "--safety-level", "local-safe", "--allow-local"]) == 0
+    assert s.calls[-1][2]["allowLocalValidation"] is True
 
 
 @pytest.mark.parametrize("argv,method", [

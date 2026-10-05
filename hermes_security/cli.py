@@ -28,6 +28,7 @@ def setup_parser(parser):
     start.add_argument("--scope", action="append")
     start.add_argument("--base")
     start.add_argument("--head")
+    start.add_argument("--allow-local", action="store_true", help="Opt this scan in to local-safe validation")
     for command in ("get", "submit", "checkpoint", "detectors", "validate", "chains", "finalize", "cancel", "resume", "export"):
         p = subs.add_parser(command)
         p.add_argument("--scan", dest="scan_id", required=True)
@@ -126,6 +127,8 @@ def _execute(args, service_factory):
     if command == "start":
         opts = {key: getattr(args, key) for key in ("path", "mode", "safety_level", "scope", "base", "head")
                 if getattr(args, key) is not None}
+        if args.allow_local:
+            opts["allowLocalValidation"] = True
         return service.start_scan(**opts)
     if command == "get":
         return service.get_scan(args.scan_id, section=args.section, limit=args.limit, offset=args.offset)

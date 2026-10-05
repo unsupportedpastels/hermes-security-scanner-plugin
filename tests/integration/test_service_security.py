@@ -60,6 +60,46 @@ def test_runtime_receipt_cannot_be_forged_by_worker_or_tool(tmp_path):
     with pytest.raises(Conflict): service.record_validations(plan['scanId'], receipts=[changed])
 
 
+@pytest.mark.parametrize('safety', ['static', 'active-authorized'])
+def test_grant_cannot_run_local_commands_from_agent_tool(tmp_path, safety):
+    import sys
+    from hermes_security.tools import make_handler
+    from hermes_security.validation import mint_grant
+    root, service, plan = setup(tmp_path, safety_level=safety)
+    sid = plan['scanId']
+    service.submit_worker_result(worker(plan, [candidate_for(root)]))
+    cid = service.get_scan(sid, 'candidates')['items'][0]['candidateId']
+    # Even a stored grant naming local-command (no longer mintable via /security) is refused.
+    grant = mint_grant(service.store, sid, origins=['http://127.0.0.1:9'], actions=['local-command'],
+                       expires_in_s=600, max_requests=5, created_by='user-command')
+    sentinel = tmp_path / 'ran'
+    handler = make_handler('security_scan_record_validations', lambda: service)
+    out = json.loads(handler({'scan_id': sid, 'plans': [{
+        'candidateId': cid, 'kind': 'local-command', 'level': 'active-authorized', 'grantId': grant['grantId'],
+        'commands': [[sys.executable, '-c', f"open({str(sentinel)!r},'w');print('MARK')"], [sys.executable, '-c', 'print(1)']],
+        'positiveControl': {'commandIndex': 0, 'expectedMarker': 'MARK'}, 'negativeControl': {'commandIndex': 1},
+        'cleanup': {'strategy': 'remove-copy'}, 'timeoutS': 2}]}))
+    assert out['ok'] is False and out['error']['code'] == 'policy_denied'
+    assert not sentinel.exists()
+    assert service.store.validations(sid) == []
+
+
+def test_grants_only_apply_to_active_authorized_scans(tmp_path):
+    root, service, plan = setup(tmp_path)
+    sid = plan['scanId']
+    service.submit_worker_result(worker(plan, [candidate_for(root)]))
+    cid = service.get_scan(sid, 'candidates')['items'][0]['candidateId']
+    grant = service.mint_grant(sid, origins=['http://127.0.0.1:9'], actions=['http-probe'],
+                               expires_in_s=600, max_requests=5, created_by='user-command')
+    probe = {'candidateId': cid, 'kind': 'http-probe', 'level': 'active-authorized', 'grantId': grant['grantId'],
+             'requests': [{'url': 'http://127.0.0.1:9/a'}, {'url': 'http://127.0.0.1:9/b'}],
+             'positiveControl': {'requestIndex': 0, 'expectedMarker': 'X'}, 'negativeControl': {'requestIndex': 1},
+             'cleanup': {'strategy': 'none'}, 'timeoutS': 1}
+    with pytest.raises(PolicyDenied):
+        service.record_validations(sid, plans=[probe])
+    assert service.store.get_grant(grant['grantId'])['used'] == 0
+
+
 def test_semantic_subsumption_schema_and_conservation(tmp_path):
     root, service, plan = setup(tmp_path, mode='deep')
     a = candidate_for(root)

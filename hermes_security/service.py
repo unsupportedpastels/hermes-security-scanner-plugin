@@ -419,7 +419,12 @@ class SecurityService:
                     grant = None
                     if level == 'local-safe' and (scan['safety_level'] != 'local-safe' or user_authorized is not True):
                         raise PolicyDenied('local-safe execution requires scan opt-in and a direct user-authorized call')
+                    # Local commands are CLI-only; a grant must not let agent tool calls run them.
+                    if item.get('kind') == 'local-command' and level != 'local-safe':
+                        raise PolicyDenied('local commands require a local-safe scan and the CLI --allow-local flag')
                     if level == 'active-authorized':
+                        if scan['safety_level'] != 'active-authorized':
+                            raise PolicyDenied('active-authorized execution requires an active-authorized scan')
                         if not isinstance(item.get('grantId'), str):
                             raise PolicyDenied('active-authorized execution requires a grant')
                         try:

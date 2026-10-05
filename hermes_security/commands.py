@@ -10,11 +10,12 @@ from .errors import ValidationError
 from .tools import encode_result, error_envelope
 
 HELP = """/security status
-/security authorize-validation <scanId> <origin> [--actions http-probe,local-command] [--minutes 30] [--max-requests 20]
+/security authorize-validation <scanId> <origin> [--actions http-probe] [--minutes 30] [--max-requests 20]
 /security revoke <grantId>
 /security help
 Grants are limited to 240 minutes and 200 requests.
-Local-safe validation is CLI-only: validate --scan <scanId> --file <plans.json> --allow-local"""
+Grants apply only to scans started with safety_level active-authorized.
+Local-safe validation is CLI-only: start --allow-local --safety-level local-safe, then validate --scan <scanId> --file <plans.json> --allow-local"""
 
 
 class UsageError(ValidationError):
@@ -52,9 +53,10 @@ def bounded_int(maximum, minimum=1):
 
 
 def _actions(text):
+    # local-command is not grantable: local execution is CLI-only (validate --allow-local).
     values = text.split(",")
-    if not values or any(v not in {"http-probe", "local-command"} for v in values):
-        raise argparse.ArgumentTypeError("Actions must be http-probe or local-command")
+    if not values or any(v != "http-probe" for v in values):
+        raise argparse.ArgumentTypeError("Actions must be http-probe")
     return list(dict.fromkeys(values))
 
 

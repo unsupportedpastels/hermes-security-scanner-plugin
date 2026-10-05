@@ -27,7 +27,7 @@ def test_complete_requires_every_worker_file_and_standard(tmp_path):
 
 
 def test_real_http_grant_budget_and_concurrent_owner_isolation(tmp_path):
-    root, service, plan = setup(tmp_path)
+    root, service, plan = setup(tmp_path, safety_level='active-authorized')
     sid = plan['scanId']
     service.submit_worker_result(worker(plan, [candidate_for(root)]))
     cid = service.get_scan(sid, 'candidates')['items'][0]['candidateId']
