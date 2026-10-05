@@ -378,12 +378,13 @@ tools and HTTP API: `start_scan(**opts)`, `get_scan(scan_id, section=None, limit
 `summary()`, `list_scans(...)`, `activity(scan_id, after_id, limit)`, `coverage(scan_id)`, `list_findings(...)`,
 `get_finding(finding_id)`, `triage(finding_id, state, note)`, `patch_preview(finding_id)`, `list_repositories(...)`.
 Data dir resolution (config.py): `ctx.state.data_dir` inside Hermes; outside (dashboard API, CLI) use
-`$HERMES_HOME/plugin-data/hermes-security` computed exactly the way `hermes_cli.plugins_state.PluginState.data_dir`
-does (import it when available; fall back to the same formula).
+`$HERMES_HOME/plugin-data/agent-plugin-hermes-security-974429e7`, computed exactly the way
+`hermes_cli.plugins_state.PluginState.data_dir` does (import it when available; fall back to the same formula).
+The directory name was confirmed by the host, not assumed from the plugin ID.
 
 Agent tools (toolset `security`, every handler returns a JSON string `{"ok":true,...}` or `{"ok":false,"error":{code,message}}`):
 `security_scan_start, security_scan_get, security_scan_checkpoint, security_scan_submit_worker_result,
 security_scan_import_detector_results, security_scan_record_validations, security_scan_record_chains,
 security_scan_finalize, security_scan_cancel, security_scan_export`.
 Slash command `/security` (status | authorize-validation <scan> <origin> [--actions ..] [--minutes N] | revoke <grant>).
-CLI `hermes security ...` and `python -m hermes_security ...` expose the same service for subagents/terminal use.
+CLI `hermes security-review ...` and `python -m hermes_security ...` expose the same service for subagents/terminal use.

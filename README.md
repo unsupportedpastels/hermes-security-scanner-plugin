@@ -58,7 +58,7 @@ The `/security` slash command supports `status`,
 `revoke <grant>`. Only user commands/CLI can grant active validation; agent tools
 cannot authorize themselves.
 
-The service also exposes `hermes security ...` and
+The service also exposes `hermes security-review ...` and
 `python -m hermes_security ...` for terminal and subagent use. Consult their
 `--help` output once the service is installed for available subcommands.
 Exports include Markdown, JSON, CSV, and SARIF.
@@ -80,7 +80,9 @@ and negative controls, and a non-static validation level. Unrun tests are
 ## Data and limitations
 
 Scan state and artifacts stay under the active profile's
-`$HERMES_HOME/plugin-data/hermes-security` (via `ctx.state.data_dir` in Hermes).
+`$HERMES_HOME/plugin-data/agent-plugin-hermes-security-974429e7` (Hermes's
+`ctx.state.data_dir`; the dashboard and standalone CLI resolve the same folder).
+`python -m hermes_security data-dir` prints it.
 There is no hosted findings service or automatic ticket publication. Exports
 are user-controlled. Local storage does **not** mean model analysis stays on
 this computer: Hermes's configured provider may receive review context.

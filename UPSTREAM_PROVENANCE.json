@@ -215,7 +215,7 @@
       "license": "Apache-2.0",
       "modified": true,
       "sourceSha256": "a89c6aa0649def73f815bac662c679cb07a00b71b995addb53ad1b6d8313022a",
-      "destinationSha256": "d547c5b405169d266db849521b44338c1503a3a25ba10ae652ab919ec566c815"
+      "destinationSha256": "ad9a5f011062442c5a61a29eb2e61cf8fb64b8e2a0d3ef3f6e29aaa5a29999bf"
     },
     {
       "source": "plugins/codex-security/references/scan-contract.md",
@@ -223,7 +223,7 @@
       "license": "Apache-2.0",
       "modified": true,
       "sourceSha256": "b362636c29d1e8b18053481abe2f97d7bb099a97040f5b63aa2702a41c1d62c8",
-      "destinationSha256": "d547c5b405169d266db849521b44338c1503a3a25ba10ae652ab919ec566c815"
+      "destinationSha256": "ad9a5f011062442c5a61a29eb2e61cf8fb64b8e2a0d3ef3f6e29aaa5a29999bf"
     },
     {
       "source": "plugins/codex-security/skills/define-security-policy/SKILL.md",
@@ -247,7 +247,7 @@
       "license": "Apache-2.0",
       "modified": true,
       "sourceSha256": "a89c6aa0649def73f815bac662c679cb07a00b71b995addb53ad1b6d8313022a",
-      "destinationSha256": "ecd31bfc038b948d88e6d57bb636b03edaf9d60c7ca870e1a8c99806ab30eabf"
+      "destinationSha256": "b02d590fc7ccb6db49fabdd78454c1e7907207567dfa3fe027265a838c6d2def"
     },
     {
       "source": "plugins/codex-security/skills/deep-security-scan/SKILL.md",
@@ -255,7 +255,7 @@
       "license": "Apache-2.0",
       "modified": true,
       "sourceSha256": "d6aed0d9b47065a1384a96d0a45c843b0cda8ba48e3d2cbe96c65357c6e55ee3",
-      "destinationSha256": "ecd31bfc038b948d88e6d57bb636b03edaf9d60c7ca870e1a8c99806ab30eabf"
+      "destinationSha256": "b02d590fc7ccb6db49fabdd78454c1e7907207567dfa3fe027265a838c6d2def"
     },
     {
       "source": "plugins/codex-security/skills/security-scan/SKILL.md",
@@ -263,7 +263,7 @@
       "license": "Apache-2.0",
       "modified": true,
       "sourceSha256": "71e05d106aac8895aaa328c3ee868ae56ddc4763657c170ad6779e376f162eba",
-      "destinationSha256": "ecd31bfc038b948d88e6d57bb636b03edaf9d60c7ca870e1a8c99806ab30eabf"
+      "destinationSha256": "b02d590fc7ccb6db49fabdd78454c1e7907207567dfa3fe027265a838c6d2def"
     },
     {
       "source": "plugins/codex-security/skills/security-diff-scan/SKILL.md",

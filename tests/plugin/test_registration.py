@@ -46,7 +46,8 @@ def test_registration_is_lazy_and_exact(tmp_path, monkeypatch):
     assert set(ctx.skills) == {"security-audit", "threat-model", "security-diff-review", "validate-finding",
                               "fix-finding", "verify-fix", "define-security-policy"}
     assert set(ctx.commands) == {"security"}
-    assert set(ctx.cli) == {"security"}
+    # `hermes security` belongs to Hermes core; the plugin CLI must not collide with it.
+    assert set(ctx.cli) == {"security-review"}
 
 
 def test_cached_service_is_profile_scoped(tmp_path, monkeypatch):

@@ -30,9 +30,10 @@ def test_start_snapshot_cancel_resume(tmp_path):
 def test_local_policy_and_profile_isolation(tmp_path, monkeypatch):
     from hermes_security.config import resolve_data_dir
     monkeypatch.setenv('HERMES_HOME', str(tmp_path / 'A'))
-    assert resolve_data_dir() == tmp_path / 'A/plugin-data/hermes-security'
+    store = 'plugin-data/agent-plugin-hermes-security-974429e7'
+    assert resolve_data_dir() == tmp_path / 'A' / store
     monkeypatch.setenv('HERMES_HOME', str(tmp_path / 'B'))
-    assert resolve_data_dir() == tmp_path / 'B/plugin-data/hermes-security'
+    assert resolve_data_dir() == tmp_path / 'B' / store
     root = tmp_path / 'repo'; root.mkdir()
     service = SecurityService(tmp_path / 'data')
     with pytest.raises(PolicyDenied): service.start_scan(path=str(root), safety_level='local-safe')

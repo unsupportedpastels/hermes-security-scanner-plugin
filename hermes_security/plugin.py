@@ -38,7 +38,8 @@ def register(ctx):
         def cli_handler(args):
             # Hermes main.py propagates an integer func(args) return code.
             return cli.run_namespace(args, service_factory)
-        ctx.register_cli_command("security", "Local repository security review",
+        # Hermes core already owns `hermes security` (supply-chain audit), which shadows plugin commands.
+        ctx.register_cli_command("security-review", "Local repository security review",
                                  cli.setup_parser, cli_handler)
     skill_root = Path(__file__).resolve().parent.parent / "skills"
     for name in _SKILLS:

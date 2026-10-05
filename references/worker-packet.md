@@ -254,7 +254,7 @@ Report every assigned unit explicitly, including deferred, unsupported, unknown,
 Use `security_scan_submit_worker_result` with the object above. When the subagent lacks that tool, use `write_file` to save one private worker-owned JSON file outside the target, then invoke `terminal` with either:
 
 - `python -m hermes_security submit --scan <id> --file <json>`
-- `hermes security submit --scan <id> --file <json>`
+- `hermes security-review submit --scan <id> --file <json>`
 
 Replace placeholders with exact values and shell-quote dynamic paths/IDs using a standard quoting helper, never by concatenating repository text as shell syntax. Use the same active Hermes profile/plugin data directory as the parent. If the CLI is absent, blocked, or points at a different profile, report the blocker; never fabricate acceptance or write canonical artifacts directly. Inspect the result and read back the exact attempt/candidates with `security_scan_get` (or the installed CLI get operation after consulting help). Return acceptance identifiers and coverage gaps, not a substitute prose finding list.
 

@@ -86,6 +86,26 @@ def test_config_context_and_importable_hermes_state(tmp_path, monkeypatch):
         assert resolve_data_dir() == tmp_path / label / 'plugin-data/hermes-security'
 
 
+def test_standalone_data_dir_matches_hermes_plugin_state(tmp_path, monkeypatch):
+    # The standalone CLI must write where agent tools (ctx.state) and the dashboard read.
+    import sys
+    from pathlib import Path
+    from hermes_security.config import data_namespace, resolve_data_dir
+    monkeypatch.setenv('HERMES_HOME', str(tmp_path))
+    monkeypatch.setitem(sys.modules, 'hermes_cli.plugins_state', None)
+    fallback = resolve_data_dir()
+    assert fallback == tmp_path / 'plugin-data' / data_namespace()
+    agent = Path('/home/mark/.hermes/hermes-agent')
+    if not (agent / 'hermes_cli' / 'plugins_manifest.py').is_file():
+        pytest.skip('Hermes source not available')
+    monkeypatch.syspath_prepend(str(agent))
+    try:
+        from hermes_cli.plugins_manifest import _portable_skill_namespace
+    except ImportError:
+        pytest.skip('Hermes manifest module not importable here')
+    assert data_namespace() == _portable_skill_namespace('hermes-security')
+
+
 def test_resume_reissues_canceled_deep_attempt(tmp_path):
     root, service, plan = setup(tmp_path, mode='deep')
     packet = plan['packets'][0]

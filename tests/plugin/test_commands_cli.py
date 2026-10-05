@@ -206,7 +206,7 @@ def test_registered_cli_preserves_exit_code(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(plugin, "get_service", lambda ctx=None: s)
     ctx = FakeContext(tmp_path)
     plugin.register(ctx)
-    setup, handler = ctx.cli["security"]
+    setup, handler = ctx.cli["security-review"]
     parser = argparse.ArgumentParser()
     setup(parser)
     args = parser.parse_args(["get", "--scan", "s"])
