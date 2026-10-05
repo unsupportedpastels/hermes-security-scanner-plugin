@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hermes-security"
+version = "0.1.0"
+description = "Local repository security review for Hermes"
+requires-python = ">=3.11"
+license = {file = "LICENSE"}
+authors = [{name = "unsupportedpastels"}]
+dependencies = []
+
+[tool.setuptools.packages.find]
+include = ["hermes_security*"]
+
+[tool.setuptools.package-data]
+hermes_security = ["schemas/*.json", "standards/*.json"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+  "e2e: end-to-end tests requiring a configured host",
+  "slow: longer-running tests",
+]

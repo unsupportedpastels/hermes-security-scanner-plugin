@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+  "version": "2.1.0",
+  "runs": [{
+    "tool": {"driver": {"name": "Semgrep", "version": "1.100.0", "rules": [{
+      "id": "python.lang.security.audit.sql-injection",
+      "shortDescription": {"text": "Possible SQL injection"},
+      "properties": {"tags": ["security", "external/cwe/cwe-89"], "security-severity": "8.1"}
+    }]}},
+    "results": [{
+      "ruleId": "python.lang.security.audit.sql-injection", "level": "warning",
+      "message": {"text": "User input may reach a dynamically constructed SQL query."},
+      "locations": [{"physicalLocation": {
+        "artifactLocation": {"uri": "src/db%20query.py", "uriBaseId": "%SRCROOT%"},
+        "region": {"startLine": 2, "endLine": 3}
+      }}]
+    }]
+  }]
+}

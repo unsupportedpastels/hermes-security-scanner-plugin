@@ -1,0 +1,17 @@
+hermes-security
+Copyright 2026 unsupportedpastels
+
+This project is a modified derivative of OpenAI codex-security.
+Upstream: https://github.com/openai/codex-security
+Revision: 89aae242136312467790947f3b122ca3f607614f
+Copyright 2025 OpenAI
+Licensed under the Apache License, Version 2.0; see LICENSE.
+
+The modifications adapt methodology and artifact contracts for Hermes,
+replace provider-specific orchestration, and add local evidence tracking,
+standards coverage, detector inputs, and controlled validation.
+This project is not endorsed by or affiliated with OpenAI.
+No OpenAI logos or branding assets are included. Product names here identify
+upstream origins only and do not grant trademark rights.
+
+File-level source paths and hashes are recorded in UPSTREAM_PROVENANCE.json.
