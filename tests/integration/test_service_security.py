@@ -43,6 +43,19 @@ def test_packet_scan_and_attempt_binding(tmp_path):
     with pytest.raises(ValidationError): service.submit_worker_result({**payload, 'notes': float('nan')})
 
 
+def test_rejected_worker_result_names_declared_fields_only(tmp_path):
+    root, service, plan = setup(tmp_path)
+    payload = worker(plan, [candidate_for(root)])
+    with pytest.raises(ValidationError) as bad_id:
+        service.submit_worker_result({**payload, 'attemptId': 'bad id'})
+    assert '$.attemptId: pattern mismatch' in str(bad_id.value)
+    key = 'evil_' + 'AKIA' + 'Q7X2M9P4R8S6T1V3'
+    with pytest.raises(ValidationError) as unknown:
+        service.submit_worker_result({**payload, key: 1})
+    assert '$.<field>: unknown field' in str(unknown.value)
+    assert 'Q7X2M9' not in str(unknown.value)
+
+
 def test_runtime_receipt_cannot_be_forged_by_worker_or_tool(tmp_path):
     root, service, plan = setup(tmp_path)
     service.submit_worker_result(worker(plan, [candidate_for(root)]))

@@ -130,6 +130,40 @@ def _load_schema(name):
     return json.loads((_SCHEMA_DIR / f'{name}.schema.json').read_text(encoding='utf-8'))
 
 
+@lru_cache(maxsize=1)
+def _schema_field_names():
+    names = set()
+    def walk(node):
+        if isinstance(node, dict):
+            names.update(k for k in node.get('properties', {}) if isinstance(k, str))
+            for value in node.values():
+                walk(value)
+        elif isinstance(node, list):
+            for value in node:
+                walk(value)
+    for path in _SCHEMA_DIR.glob('*.schema.json'):
+        walk(json.loads(path.read_text(encoding='utf-8')))
+    return frozenset(names)
+
+
+def public_problems(problems, limit=5):
+    """Problem paths safe to echo: only field names our own schemas declare.
+
+    Payload-supplied keys (e.g. an unknown field named like a credential) become <field>.
+    Messages after the colon are validator constants, never payload values.
+    """
+    known = _schema_field_names()
+    out = []
+    for problem in problems[:limit]:
+        path, _, message = problem.partition(': ')
+        parts = re.findall(r'\.([^.\[]+)|(\[\d+\])', path[1:] if path.startswith('$') else path)
+        safe = '$' + ''.join(index or ('.' + name if name in known else '.<field>') for name, index in parts)
+        out.append(safe + ': ' + message if message else safe)
+    if len(problems) > limit:
+        out.append(f'{len(problems) - limit} more')
+    return out
+
+
 def validate_document(document_type: str, doc: dict) -> list[str]:
     if document_type not in _DOCUMENTS:
         return ['$: unknown document type']

@@ -19,7 +19,7 @@ from . import target, detectors, validation, reports, chains
 from .canonical import canonical_json, sha256_hex, stable_id, utcnow
 from .domain.models import normalize_candidate, promote_to_finding
 from .domain.identities import finding_id
-from .domain.validate import validate_worker_result, validate_document
+from .domain.validate import validate_worker_result, validate_document, public_problems
 from .errors import SecurityError, ValidationError, NotFound, Conflict, SealedError, PolicyDenied
 from .store.db import SecurityStore
 from .store.artifacts import scan_dir, write_artifact, read_artifact
@@ -247,8 +247,8 @@ class SecurityService:
     def submit_worker_result(self, payload):
         problems = validate_worker_result(payload)
         if problems:
-            # Schema paths can contain attacker-supplied field names, so do not echo them.
-            raise ValidationError('worker result violates the input contract')
+            # Raw schema paths can contain attacker-supplied field names; echo only declared ones.
+            raise ValidationError('worker result violates the input contract: ' + '; '.join(public_problems(problems)))
         scan_id = payload['scanId']
         with self._mutation(scan_id) as scan:
             if payload['snapshotDigest'] != scan['snapshot_digest']:

@@ -145,7 +145,7 @@ catalogue and the `<path>/<function|construct>` anchor convention, because exact
 ruleId+anchor matching otherwise measures vocabulary, not detection. That disclosure,
 and the public fixtures, make this a **development run, not a blind holdout**.
 All 26 scans sealed and verified with no service errors. Raw scorer output:
-`evals/model-dev-run-1.txt` (index: `evals/model-dev-run-1-index.json`; bundles stayed
+`evals/model-dev-run-1.txt` (index: `evals/model-dev-runs-1-5-index.json`, run 1; bundles stayed
 in private scratch storage).
 
 Gate | Threshold | Measured | Status
@@ -183,7 +183,31 @@ Before claiming any discovery or severity quality: fix the sca fixture (supply t
 advisory), decide the secrets and upload gold, choose severity calibration for
 caller-less fixtures, then re-run on a genuinely independent holdout.
 
-### Five-run agreement (NOT RUN)
+### Five-run agreement (RUN on dev runs 1–5, gates FAIL)
+
+Runs 2–5 repeated run 1 with the same provider/model, the same worker
+instructions and a fresh random case grouping per run (four unrelated cases per
+worker), each in its own data directory. All 130 scans sealed and verified with no
+service errors. Scorer output: `evals/model-dev-runs-1-5.txt`.
+
+Run | Precision | Recall | High/Critical recall | Severity within one band
+--- | --- | --- | --- | ---
+1 | 0.818 | 0.692 | 0.75 | 0.462
+2 | 0.833 | 0.769 | 0.833 | 0.692
+3 | 0.833 | 0.769 | 0.833 | 0.615
+4 | 0.917 | 0.846 | 0.917 | 0.692
+5 | 0.833 | 0.769 | 0.833 | 0.692
+
+Severity exact stayed 0.0 in every run, and completed-case coverage stayed 0.0.
+
+The official `verdict-agreement` and `root-set-jaccard` gates measured **0.0 (FAIL)**.
+This follows the rule below: every scan is `partial`, so no case has five completed
+runs. As a **diagnostic only** (not a gate result), the same formulas applied to the
+sealed partial bundles give verdict agreement 25/26 (0.962) and root-set Jaccard 0.969.
+The disagreements were ssrf-vulnerable (missed in run 1, found in runs 2–5) and
+iac-vulnerable (anchor `main.tf/ingress` once, `main.tf/resource` four times).
+
+Gate definition:
 
 ```sh
 /home/mark/.hermes/hermes-agent/venv/bin/python scripts/run-evals.py --score-bundles /path/to/five-run-bundles
@@ -248,14 +272,14 @@ dedup-source-conservation | 1.0 | 1.0 | PASS
 dedup-invalid-merges | 0 | 0 | PASS
 code-computed-chain-severity | 1.0 | 1.0 | PASS
 blind-discovery-and-model-severity | see thresholds | see "Development model run 1" | RUN (dev, not blind): all score gates FAIL
-five-run-provider-agreement | — | — | NOT RUN: python scripts/run-evals.py --score-bundles /path/to/five-run-bundles
+five-run-provider-agreement | .95 / .90 | 0.0 / 0.0 (diagnostic on partial bundles: .962 / .969) | RUN (dev): FAIL, scans partial
 paired-upstream-comparison | — | — | NOT RUN: python scripts/compare-upstream.py --pairs /path/to/paired-bundles/pairs.json
 
 The concurrent hostile-repository suite currently includes one expected failure
 for trusted per-attempt provider/fallback lifecycle metadata. The captured pytest
 output makes that limitation visible; it is not resolved by this eval harness.
-Model discovery and severity were run once as a development run (above; gates
-FAIL). Five-run agreement and paired upstream parity remain **NOT RUN**.
+Model discovery and severity were run five times as development runs (above; gates
+FAIL), including five-run agreement. Paired upstream parity remains **NOT RUN**.
 
 Final separate full-suite command returned:
 
