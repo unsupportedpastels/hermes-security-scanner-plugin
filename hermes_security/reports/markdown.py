@@ -31,7 +31,9 @@ def render_markdown(manifest: dict, findings_doc: dict, coverage: dict, chains_d
         gaps = coverage.get('gaps', [])
         if not gaps:
             gaps = [f"The scan ended with status {manifest.get('status', 'unknown')}; not all requested review work was established as complete."]
-        parts.append('> **This scan is incomplete.** ' + ' '.join(_text(g) for g in gaps) +
+        # Keep the banner short; the full gap list is rendered under Limitations.
+        summary = _text(gaps[0]) if len(gaps) == 1 else f'{len(gaps)} coverage gaps are listed under Limitations.'
+        parts.append('> **This scan is incomplete.** ' + summary +
                      ' Absence of findings does not establish that the target is safe.')
     totals = Counter(f['severity']['level'] for f in findings)
     parts.extend(['## Severity totals', '| Severity | Findings |\n|---|---:|\n' + '\n'.join(f'| {human_label(s)} | {totals[s]} |' for s in SEVERITIES),
@@ -103,6 +105,7 @@ def render_markdown(manifest: dict, findings_doc: dict, coverage: dict, chains_d
     for f in retained:
         reason = f.get('reason') or f.get('rejectionReason') or f.get('summary') or 'No reason recorded.'
         parts.append(f"- {_text(f.get('title', f.get('candidateId')))}: {human_label(f.get('evidenceState', 'candidate'))} — {_text(reason)}")
-    parts.extend(['## Limitations', _bullets(coverage.get('gaps', []), 'No coverage gaps were recorded.'),
+    gaps = coverage.get('gaps') or ([f"The scan ended with status {manifest.get('status', 'unknown')}; not all requested review work was established as complete."] if incomplete else [])
+    parts.extend(['## Limitations', _bullets(gaps, 'No coverage gaps were recorded.'),
                   'Source review alone does not establish runtime exploitability. Validation that was not performed is marked NOT RUN.'])
     return '\n\n'.join(parts) + '\n'

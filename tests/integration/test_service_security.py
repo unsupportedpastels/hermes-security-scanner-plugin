@@ -84,6 +84,17 @@ def test_grant_cannot_run_local_commands_from_agent_tool(tmp_path, safety):
     assert service.store.validations(sid) == []
 
 
+def test_symlinked_data_dir_ancestor_is_resolved(tmp_path):
+    real = tmp_path / 'real'; real.mkdir()
+    (tmp_path / 'alias').symlink_to(real)
+    root = tmp_path / 'repo'; root.mkdir()
+    (root / 'app.py').write_text('x = 1\n')
+    service = SecurityService(tmp_path / 'alias' / 'data')
+    assert service.data_dir == real / 'data'
+    sid = service.start_scan(path=str(root))['scanId']
+    assert service.run_detectors(sid, ['builtin-secrets'])['receipts'][0]['status'] == 'ok'
+
+
 def test_grants_only_apply_to_active_authorized_scans(tmp_path):
     root, service, plan = setup(tmp_path)
     sid = plan['scanId']

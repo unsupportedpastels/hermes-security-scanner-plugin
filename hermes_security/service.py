@@ -31,7 +31,9 @@ from .orchestration.worker_protocol import check_candidate
 
 class SecurityService:
     def __init__(self, data_dir: Path, *, profile='default', clock=None):
-        self.data_dir = Path(data_dir).absolute()
+        # Resolve trusted configuration once (e.g. a symlinked HERMES_HOME); artifact
+        # access below this root still refuses symlinks with O_NOFOLLOW.
+        self.data_dir = Path(data_dir).resolve()
         if not isinstance(profile, str) or not profile:
             raise ValidationError('profile must be nonempty text')
         self.profile = profile

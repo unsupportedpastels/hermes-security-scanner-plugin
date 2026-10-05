@@ -55,7 +55,7 @@
       "license": "Apache-2.0",
       "modified": true,
       "sourceSha256": "1b24978a3cdb3c336ac27a2b39fb35457bade13a4aad0782710fe38ac39965cf",
-      "destinationSha256": "9721dc1362448c360dd05f420e33e52017a1b1ccf0c9401935b281774e9aedec"
+      "destinationSha256": "1c05e0d89a732a6939fada10d3074b607ebbf727fb8e46bdd7d1e12f88c3e8dc"
     },
     {
       "source": "plugins/codex-security/scripts/finalize_scan_contract.py",

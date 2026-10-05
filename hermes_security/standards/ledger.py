@@ -199,7 +199,7 @@ def mandatory_gaps(ledger: dict) -> list[str]:
     for section, key, label in (("owaspTop10", "categories", "OWASP lane"), ("asvs", "controls", "ASVS control")):
         for row in ledger.get(section, {}).get(key, []):
             if row["state"] not in {"reviewed", "not_applicable"}:
-                gaps.append(f"{label} {row['id']} is {row['state']}: {row['reason']}.")
+                gaps.append(f"{label} {row['id']} is {row['state']}: {str(row['reason']).rstrip(' .')}.")
     return gaps
 
 
