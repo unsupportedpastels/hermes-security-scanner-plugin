@@ -134,6 +134,55 @@ first one-to-one match. Findings on fixed siblings are false positives.
 Thresholds: precision .95, recall .85, High/Critical recall .95, exact severity .85,
 within-one-band .95 and High/Critical precision .95. These remain provisional.
 
+### Development model run 1 (RUN, gates FAIL)
+
+One real model run over all 26 cases on 2026-10-05: provider `openai-codex`, model
+`gpt-6-astra`, 13 subagent workers with two unrelated cases each. Cases were copied to
+neutral shuffled names (`case-01`..`case-26`) with no family/variant labels; the
+mapping and gold were withheld and workers were forbidden to read `evals/`,
+`tests/fixtures/` or this file. Workers *were* given the 13 gold rule IDs as a rule
+catalogue and the `<path>/<function|construct>` anchor convention, because exact
+ruleId+anchor matching otherwise measures vocabulary, not detection. That disclosure,
+and the public fixtures, make this a **development run, not a blind holdout**.
+All 26 scans sealed and verified with no service errors. Raw scorer output:
+`evals/model-dev-run-1.txt` (index: `evals/model-dev-run-1-index.json`; bundles stayed
+in private scratch storage).
+
+Gate | Threshold | Measured | Status
+--- | --- | --- | ---
+completed-case-coverage | 1.0 | 0.0 | FAIL
+precision | 0.95 | 0.818 (9/11) | FAIL
+recall | 0.85 | 0.692 (9/13) | FAIL
+highCriticalRecall | 0.95 | 0.75 | FAIL
+severityExact | 0.85 | 0.0 | FAIL
+severityWithinOne | 0.95 | 0.462 | FAIL
+highCriticalPrecision | 0.95 | null (no High/Critical reports) | FAIL
+
+Post-run adjudication notes. These explain the numbers; they do **not** change gold or
+scores (relabeling after observing scores is not allowed):
+
+- **Coverage:** every scan is `partial` because workers were told not to mark hundreds
+  of OWASP/ASVS controls reviewed or not applicable without genuine reasons.
+- **Severity:** every finding was rated medium or low. `references/severity-policy.md`
+  (adapted from upstream) rates high impact with unknown likelihood as `medium`, and
+  two-line fixtures with no callers always have unknown likelihood. Gold assumes High or
+  Critical. Gold and policy disagree; this run cannot tell which calibration is right.
+- **secrets-vulnerable missed:** the literal is `FAKE_EVAL_ONLY_NOT_A_REAL_PASSWORD`;
+  the worker declined to call it a real credential.
+- **sca-vulnerable missed:** the case contains only `example-eval-lib==1.0.0` and no
+  advisory, so static review cannot establish a vulnerability. Fixture defect.
+- **iac-vulnerable:** correct issue, reported with anchor `main.tf/resource`. Gold is
+  `main.tf/ingress`, so it scored as one false positive plus one miss.
+- **upload-vulnerable:** an extra `path.escape` report counts as a false positive, but
+  `Path("/srv/www") / name` with an unchecked name does escape the directory. Gold omits it.
+- **ssrf-vulnerable missed:** genuine model miss. `client.get(url)` with caller input
+  was judged unsupported for lack of a caller.
+- No findings on any fixed sibling.
+
+Before claiming any discovery or severity quality: fix the sca fixture (supply the
+advisory), decide the secrets and upload gold, choose severity calibration for
+caller-less fixtures, then re-run on a genuinely independent holdout.
+
 ### Five-run agreement (NOT RUN)
 
 ```sh
@@ -198,18 +247,18 @@ zero-hidden-inventory-truncation | 0 | 0 | PASS
 dedup-source-conservation | 1.0 | 1.0 | PASS
 dedup-invalid-merges | 0 | 0 | PASS
 code-computed-chain-severity | 1.0 | 1.0 | PASS
-blind-discovery-and-model-severity | — | — | NOT RUN: python scripts/run-evals.py --score-bundles /path/to/sealed-bundles
+blind-discovery-and-model-severity | see thresholds | see "Development model run 1" | RUN (dev, not blind): all score gates FAIL
 five-run-provider-agreement | — | — | NOT RUN: python scripts/run-evals.py --score-bundles /path/to/five-run-bundles
 paired-upstream-comparison | — | — | NOT RUN: python scripts/compare-upstream.py --pairs /path/to/paired-bundles/pairs.json
 
 The concurrent hostile-repository suite currently includes one expected failure
 for trusted per-attempt provider/fallback lifecycle metadata. The captured pytest
 output makes that limitation visible; it is not resolved by this eval harness.
-Model discovery, model severity, five-run agreement and paired upstream parity
-remain **NOT RUN**. No production-code changes were made by this task.
+Model discovery and severity were run once as a development run (above; gates
+FAIL). Five-run agreement and paired upstream parity remain **NOT RUN**.
 
 Final separate full-suite command returned:
 
 ```text
-436 passed, 5 skipped, 1 xfailed in 17.85s
+444 passed, 5 skipped, 1 xfailed in 17.89s
 ```
