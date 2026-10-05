@@ -1,7 +1,7 @@
 """Snapshot identities and no-filter Git diff manifests."""
 import os
-from hermes_security.canonical import canonical_json, sha256_hex
-from hermes_security.errors import TargetError
+from ..canonical import canonical_json, sha256_hex
+from ..errors import TargetError
 from .resolve import git_bytes, resolve_target
 from .inventory import build_inventory, validate_path
 from .policy import matches_scope

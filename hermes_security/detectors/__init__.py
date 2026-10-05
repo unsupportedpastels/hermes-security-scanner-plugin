@@ -16,7 +16,7 @@ def run_detectors(names,target,inventory,work_dir):
     work=Path(work_dir)
     root=Path(target['root']).resolve()
     if work.resolve()==root or root in work.resolve().parents:
-        from hermes_security.errors import ValidationError
+        from ..errors import ValidationError
         raise ValidationError('detector work directory must be outside target')
     work.mkdir(parents=True,exist_ok=True,mode=0o700)
     candidates=[]; receipts=[]

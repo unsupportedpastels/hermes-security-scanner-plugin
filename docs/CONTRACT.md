@@ -82,7 +82,7 @@ EVIDENCE_LABELS = {"candidate":"Needs review","source_supported":"Supported by c
 CHAIN_STATES = ("candidate_chain","source_supported_chain","runtime_confirmed_chain","broken_chain")
 SEVERITIES = ("critical","high","medium","low","informational")
 CONFIDENCE = ("high","medium","low")
-SCAN_MODES = ("standard","deep","diff","validate")
+SCAN_MODES = ("standard","deep","diff")   # validation is record_validations on an existing scan
 SAFETY_LEVELS = ("static","local-safe","active-authorized")
 SCAN_STATUSES = ("created","running","awaiting_analysis","finalizing","completed","partial",
                  "canceled","interrupted","failed")

@@ -2,7 +2,7 @@
 import math
 import re
 from collections import Counter
-from hermes_security.canonical import secret_fingerprint
+from ..canonical import secret_fingerprint
 
 PATTERNS = [
     ('private-key', re.compile(r'-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----[\s\S]*?(?:-----END (?:[A-Z0-9]+ )*PRIVATE KEY-----|\Z)')),

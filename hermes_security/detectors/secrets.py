@@ -4,7 +4,7 @@ import math
 from pathlib import Path
 import re
 from collections import Counter
-from hermes_security.canonical import secret_fingerprint, sha256_hex
+from ..canonical import secret_fingerprint, sha256_hex
 from .base import Detector, DetectorReceipt, candidate
 from .sarif import inventory_path
 

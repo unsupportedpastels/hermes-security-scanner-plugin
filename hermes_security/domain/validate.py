@@ -8,7 +8,7 @@ import math
 import re
 from functools import lru_cache
 from pathlib import Path
-from hermes_security.canonical import canonical_json
+from ..canonical import canonical_json
 
 _SCHEMA_DIR = Path(__file__).resolve().parents[1] / 'schemas'
 _DOCUMENTS = {f'hermes-security.{name}': name for name in ('findings', 'coverage', 'scan-manifest', 'chains')}

@@ -8,12 +8,12 @@ proof. Imported coverage is partial because upstream has no Hermes standards led
 from copy import deepcopy
 import json
 from pathlib import Path
-from hermes_security.canonical import canonical_json, sha256_hex
-from hermes_security.errors import ValidationError
-from hermes_security.domain.identities import scan_id as make_scan_id
-from hermes_security.domain.models import normalize_candidate, promote_to_finding
-from hermes_security.domain.validate import validate_document
-from hermes_security.target.excerpt import redact_secrets
+from ..canonical import canonical_json, sha256_hex
+from ..errors import ValidationError
+from ..domain.identities import scan_id as make_scan_id
+from ..domain.models import normalize_candidate, promote_to_finding
+from ..domain.validate import validate_document
+from ..target.excerpt import redact_secrets
 
 
 def _text(value):

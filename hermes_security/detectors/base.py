@@ -10,8 +10,8 @@ import subprocess
 import tempfile
 import time
 
-from hermes_security.canonical import canonical_json, sha256_hex, stable_id, utcnow
-from hermes_security.errors import ValidationError
+from ..canonical import canonical_json, sha256_hex, stable_id, utcnow
+from ..errors import ValidationError
 
 
 def DetectorReceipt(detector, kind='sarif', **values):

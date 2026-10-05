@@ -1,7 +1,7 @@
 """Receipt construction and conservative evidence transitions."""
 import re
-from hermes_security.canonical import canonical_json, sha256_hex, stable_id, utcnow
-from hermes_security.errors import ValidationError
+from ..canonical import canonical_json, sha256_hex, stable_id, utcnow
+from ..errors import ValidationError
 
 _SECRET=re.compile(r'(?im)(?:\b(?:password|passwd|secret|token|api[_-]?key|authorization)\s*[:=]\s*[\"\']?[^\s\"\',;]+|\b(?:AKIA|ASIA)[A-Z0-9]{16}\b|\bgh[pousr]_[A-Za-z0-9_]{20,}\b|\bsk-[A-Za-z0-9_-]{16,}\b|Bearer\s+\S+|-----BEGIN [^-]*PRIVATE KEY-----[\s\S]*?-----END [^-]*PRIVATE KEY-----)')
 

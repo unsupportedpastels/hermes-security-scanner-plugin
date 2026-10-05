@@ -1,5 +1,5 @@
 """Contained evidence reads; redact the complete file before cutting line ranges."""
-from hermes_security.errors import TargetError
+from ..errors import TargetError
 from .inventory import safe_read, validate_path
 from .redact import redact_secrets
 

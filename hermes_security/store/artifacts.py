@@ -8,7 +8,7 @@ import os
 from pathlib import Path, PureWindowsPath
 import stat
 import uuid
-from hermes_security.errors import ValidationError, NotFound
+from ..errors import ValidationError, NotFound
 
 
 def _parts(rel):

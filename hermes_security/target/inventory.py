@@ -7,8 +7,8 @@ on platforms without dir_fd/O_NOFOLLOW rather than claim equivalent protection.
 import os
 import stat
 from pathlib import Path, PurePosixPath
-from hermes_security.canonical import sha256_hex
-from hermes_security.errors import TargetError
+from ..canonical import sha256_hex
+from ..errors import TargetError
 from .resolve import git_bytes
 from .policy import classify, exclusion_reason, is_untrusted_instruction_file
 

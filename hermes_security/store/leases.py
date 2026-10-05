@@ -2,7 +2,7 @@
 
 import math
 import time
-from hermes_security.errors import ValidationError
+from ..errors import ValidationError
 
 
 def lease(connection, scan_id, owner, ttl_s):

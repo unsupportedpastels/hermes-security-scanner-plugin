@@ -15,7 +15,7 @@
       "license": "Apache-2.0",
       "modified": true,
       "sourceSha256": "6ac14e659e884e9582d8bd9ba480f6364ca17309e1a3dee9469ab025a3380b11",
-      "destinationSha256": "24dae375f4908e819cf55464d686e5d86a660068fbf0922ef2b0e75d50918c58"
+      "destinationSha256": "e4254e3fb27bf119b6e75c3cc5f06a4b4126895853b3196361c6351900fd3b54"
     },
     {
       "source": "schemas/findings.schema.json",
@@ -23,7 +23,7 @@
       "license": "Apache-2.0",
       "modified": true,
       "sourceSha256": "a480337cc0fa4c48c44fc7be17c6c4348767815570775cda80f2aaf797b8e56c",
-      "destinationSha256": "24dae375f4908e819cf55464d686e5d86a660068fbf0922ef2b0e75d50918c58"
+      "destinationSha256": "e4254e3fb27bf119b6e75c3cc5f06a4b4126895853b3196361c6351900fd3b54"
     },
     {
       "source": "schemas/scan-manifest.schema.json",
@@ -31,7 +31,7 @@
       "license": "Apache-2.0",
       "modified": true,
       "sourceSha256": "c621d4136ac81741ac8da1960c7f5e92ade22c0b5490e378ea4339b09e45b6f3",
-      "destinationSha256": "24dae375f4908e819cf55464d686e5d86a660068fbf0922ef2b0e75d50918c58"
+      "destinationSha256": "e4254e3fb27bf119b6e75c3cc5f06a4b4126895853b3196361c6351900fd3b54"
     },
     {
       "source": "plugins/codex-security/scripts/finalize_scan_contract.py",
@@ -47,7 +47,7 @@
       "license": "Apache-2.0",
       "modified": true,
       "sourceSha256": "1bcb2ddbcc25916bb5cdbb942e16f66f56d44105d1e8a294c85bbf6e4e03023d",
-      "destinationSha256": "2b3116e13505c4d86ea2ec5e61ec36306c3bbe1599f785ea3c2b4ba56daeb341"
+      "destinationSha256": "a7e0eee59571280bedfcc02886e33a22bf30077da7fba423a39cadaf3d0bd7e8"
     },
     {
       "source": "plugins/codex-security/scripts/report_projection.py",

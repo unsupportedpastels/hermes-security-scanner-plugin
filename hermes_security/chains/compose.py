@@ -1,6 +1,6 @@
 """Bounded deterministic traversal; finding-order identity, no cyclic paths."""
-from hermes_security.canonical import canonical_json
-from hermes_security.errors import ValidationError
+from ..canonical import canonical_json
+from ..errors import ValidationError
 from .eligibility import _context
 from .validate import validate_chain
 

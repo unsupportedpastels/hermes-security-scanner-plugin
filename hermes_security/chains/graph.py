@@ -1,5 +1,5 @@
 """Canonical chains document builder; explanation text cannot change the graph."""
-from hermes_security.errors import ValidationError
+from ..errors import ValidationError
 from .compose import compose
 from .eligibility import _context, _target_defeats, eligible_edges
 from .vocabulary import VOCABULARY_VERSION

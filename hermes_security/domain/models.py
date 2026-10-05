@@ -1,7 +1,7 @@
 """JSON-native domain helpers; normalization never invents supporting evidence."""
 from copy import deepcopy
 from typing import TypedDict, NotRequired
-from hermes_security.errors import ValidationError
+from ..errors import ValidationError
 from .identities import candidate_id, finding_id, occurrence_id, primary_fingerprint
 from .validate import check_finding_sections, validate_document
 

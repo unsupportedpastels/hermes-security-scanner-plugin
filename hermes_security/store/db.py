@@ -9,8 +9,8 @@ import sqlite3
 import time
 import uuid
 
-from hermes_security.canonical import canonical_json, stable_id, utcnow
-from hermes_security.errors import Conflict, NotFound, SealedError, ValidationError
+from ..canonical import canonical_json, stable_id, utcnow
+from ..errors import Conflict, NotFound, SealedError, ValidationError
 from .migrations import migrate
 from . import leases
 
@@ -785,8 +785,24 @@ class SecurityStore:
             ).fetchone()
             data = self._json(item)
             if old:
-                if old["scan_id"] != scan_id or old["data"] != data:
+                previous = json.loads(old["data"])
+                if old["scan_id"] != scan_id:
                     raise Conflict("grant already exists")
+                if old["data"] != data:
+                    # Scope/authority remain immutable. The validation runner
+                    # charges requests before I/O through this same API; only
+                    # monotonic, capped usage may change. Callers still need a
+                    # lease around read/dispatch because this is not consume().
+                    before = previous.get("used", 0)
+                    after = item.get("used", 0)
+                    cap = previous.get("maxRequests")
+                    if ({k: v for k, v in previous.items() if k != "used"}
+                            != {k: v for k, v in item.items() if k != "used"}
+                            or previous.get("revoked") or previous.get("revokedAt")
+                            or type(before) is not int or type(after) is not int
+                            or type(cap) is not int or not 0 <= before < after <= cap):
+                        raise Conflict("grant already exists")
+                    c.execute("UPDATE validation_grants SET data=? WHERE grant_id=?", (data, gid))
             else:
                 c.execute(
                     "INSERT INTO validation_grants VALUES(?,?,?)", (gid, scan_id, data)

@@ -62,16 +62,18 @@ def test_provenance_pins_and_entries():
 
 
 def test_register_is_lazy_and_forwards_context(monkeypatch):
-    spec = importlib.util.spec_from_file_location("security_scaffold_entry", ROOT / "__init__.py")
+    # Load the way Hermes does: synthetic package name with the plugin dir as its search path.
+    name = "security_scaffold_entry"
+    spec = importlib.util.spec_from_file_location(name, ROOT / "__init__.py", submodule_search_locations=[str(ROOT)])
     module = importlib.util.module_from_spec(spec)
+    monkeypatch.setitem(sys.modules, name, module)
     spec.loader.exec_module(module)
     assert callable(module.register)
-    import hermes_security
+    assert f"{name}.hermes_security" not in sys.modules
     calls = []
-    plugin = types.ModuleType("hermes_security.plugin")
+    plugin = types.ModuleType(f"{name}.hermes_security.plugin")
     plugin.register = calls.append
-    monkeypatch.setitem(sys.modules, "hermes_security.plugin", plugin)
-    monkeypatch.setattr(hermes_security, "plugin", plugin, raising=False)
+    monkeypatch.setitem(sys.modules, f"{name}.hermes_security.plugin", plugin)
     ctx = object()
     module.register(ctx)
     assert calls == [ctx]

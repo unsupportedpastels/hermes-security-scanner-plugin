@@ -13,8 +13,8 @@ import re
 import stat
 from pathlib import Path, PurePosixPath
 
-from hermes_security.canonical import canonical_json, sha256_hex
-from hermes_security.errors import ValidationError
+from ..canonical import canonical_json, sha256_hex
+from ..errors import ValidationError
 from .copy import REPORTABLE, SEVERITIES, _sections, distinct_sections
 from .markdown import render_markdown
 from .sarif import render_sarif
@@ -98,7 +98,7 @@ def finalize_bundle(*, manifest: dict, findings_doc: dict, coverage: dict, chain
     """
     manifest, findings_doc, coverage, chains_doc = copy.deepcopy((manifest, findings_doc, coverage, chains_doc))
     try:
-        from hermes_security.domain.validate import validate_document
+        from ..domain.validate import validate_document
     except ImportError:
         validate_document = None
     def validate(kind, doc):

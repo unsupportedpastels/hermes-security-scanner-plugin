@@ -3,8 +3,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import PurePath
 from urllib.parse import urlsplit
 import uuid
-from hermes_security.canonical import stable_id, utcnow
-from hermes_security.errors import PolicyDenied, ValidationError
+from ..canonical import stable_id, utcnow
+from ..errors import PolicyDenied, ValidationError
 
 LEVELS = {'static', 'local-safe', 'active-authorized'}
 ACTIONS = {'http-probe', 'local-command'}

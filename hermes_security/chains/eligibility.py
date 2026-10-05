@@ -1,8 +1,8 @@
 """Pure, fail-closed capability matching. No prose/CWE inference."""
 from copy import deepcopy
 
-from hermes_security.canonical import canonical_json
-from hermes_security.errors import ValidationError
+from ..canonical import canonical_json
+from ..errors import ValidationError
 from .vocabulary import ACTORS, ACTOR_YIELDS, EFFECTS, EFFECT_SATISFIES, PARTICIPATING_STATES, PRECONDITIONS, TENANTS
 
 

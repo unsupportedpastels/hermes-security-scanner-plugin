@@ -17,8 +17,8 @@ import threading
 import time
 import urllib.error
 import urllib.request
-from hermes_security.canonical import utcnow
-from hermes_security.errors import PolicyDenied, NotFound
+from ..canonical import utcnow
+from ..errors import PolicyDenied, NotFound
 from .policy import check_plan, normalize_origin
 from .plans import execution_limits, control_spec
 from .receipts import build_receipt

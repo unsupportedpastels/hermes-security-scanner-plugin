@@ -2,8 +2,8 @@
 from pathlib import Path
 import os
 import subprocess
-from hermes_security.canonical import canonical_json, sha256_hex
-from hermes_security.errors import TargetError
+from ..canonical import canonical_json, sha256_hex
+from ..errors import TargetError
 
 
 def git_bytes(root, *args, optional=False):

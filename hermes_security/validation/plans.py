@@ -1,6 +1,6 @@
 """Execution-plan bounds and paired-control indexing."""
 import math
-from hermes_security.errors import PolicyDenied
+from ..errors import PolicyDenied
 
 def execution_limits(plan):
     """Return validated limits; caps cannot be disabled by a plan."""

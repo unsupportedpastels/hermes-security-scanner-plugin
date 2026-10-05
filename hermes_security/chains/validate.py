@@ -1,8 +1,8 @@
 """Independent edge revalidation and final-impact severity policy."""
 from copy import deepcopy
 
-from hermes_security.canonical import canonical_json, stable_id
-from hermes_security.errors import ValidationError
+from ..canonical import canonical_json, stable_id
+from ..errors import ValidationError
 from .eligibility import _context, _evidence, _satisfies, _valid, eligible_edges
 from .vocabulary import EFFECTS, PARTICIPATING_STATES, SEVERITIES
 

@@ -1,6 +1,6 @@
 """Forward-only SQLite schema. Caller holds BEGIN IMMEDIATE during migration."""
 
-from hermes_security.errors import Conflict
+from ..errors import Conflict
 
 VERSION = 1
 DDL = [

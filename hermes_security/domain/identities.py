@@ -1,5 +1,5 @@
 """Deterministic identities; chain order is significant."""
-from hermes_security.canonical import canonical_json, sha256_hex, stable_id
+from ..canonical import canonical_json, sha256_hex, stable_id
 
 def finding_id(repo_key, rule_id, anchor):
     return stable_id("hsf", repo_key, rule_id, anchor)
