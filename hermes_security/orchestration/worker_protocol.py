@@ -8,6 +8,8 @@ from ..errors import ValidationError
 
 def check_candidate(raw, *, scan, inventory, attempt_id):
     candidate = normalize_candidate(raw, scan_id=scan['scan_id'])
+    if raw.get('candidateId') is not None and raw['candidateId'] != candidate['candidateId']:
+        raise ValidationError('candidateId does not match this scan and source identity')
     paths = {entry['path']: entry for entry in inventory}
     for loc in candidate['locations'] + candidate['codeEvidence']:
         path, start = loc.get('path'), loc.get('startLine')
@@ -17,7 +19,7 @@ def check_candidate(raw, *, scan, inventory, attempt_id):
         if type(start) is not int or type(end) is not int or not 1 <= start <= end <= paths[path]['lines']:
             raise ValidationError('citation line range is outside inventory file')
     for evidence in candidate['codeEvidence']:
-        if not target.verify_excerpt(scan['root'], evidence['path'], evidence['startLine'], evidence.get('endLine', evidence['startLine']), evidence.get('code'), inventory_paths=set(paths)):
+        if not target.verify_excerpt(scan['root'], evidence['path'], evidence['startLine'], evidence.get('endLine', evidence['startLine']), evidence.get('code'), inventory_paths=set(paths), expected_sha256=paths[evidence['path']]['sha256']):
             raise ValidationError('code excerpt does not match snapshot')
         evidence['sha256'] = sha256_hex(evidence['code'])
     # A worker may describe source support but cannot claim runtime receipt authority.

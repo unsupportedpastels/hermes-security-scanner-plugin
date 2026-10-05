@@ -5,6 +5,7 @@ from pathlib import Path
 import re
 from collections import Counter
 from ..canonical import secret_fingerprint, sha256_hex
+from ..target.inventory import safe_read, FileRejected
 from .base import Detector, DetectorReceipt, candidate
 from .sarif import inventory_path
 
@@ -86,19 +87,25 @@ class BuiltinSecretsDetector(Detector):
             path=entry['path']
             file=root/path
             if inventory_path(file.as_uri(),target,inventory,paths=paths)!=path:
+                receipt.update(status='failed', error='inventory path unavailable')
                 continue
             if any(p.is_symlink() for p in [file,*file.parents] if p!=root and root in p.parents):
+                receipt.update(status='failed', error='inventory path became a symlink')
                 continue
             try:
-                with file.open('rb') as stream:
-                    data=stream.read(MAX_FILE_BYTES+1)
-                if len(data)>MAX_FILE_BYTES:
-                    receipt['truncated']=True
-                    continue
+                data, _ = safe_read(root, path, MAX_FILE_BYTES)
                 if b'\x00' in data:
+                    receipt.update(status='failed', error='binary or archive content not inspected')
                     continue
                 text=data.decode('utf-8')
+            except FileRejected as exc:
+                if str(exc) == 'too_large':
+                    receipt['truncated'] = True
+                else:
+                    receipt.update(status='failed', error='unsafe or changed inventory file not inspected')
+                continue
             except (OSError,UnicodeError):
+                receipt.update(status='failed', error='unreadable or non-UTF-8 content not inspected')
                 continue
             lines=text.splitlines(keepends=True)
             if any(len(line)>MAX_LINE_CHARS for line in lines):

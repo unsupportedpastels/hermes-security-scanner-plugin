@@ -53,6 +53,12 @@ def import_sarif(path_or_bytes, *, target, inventory, detector_name='sarif'):
         for run in doc['runs']:
             if not isinstance(run,dict) or not isinstance(run.get('results'),list):
                 raise ValueError('invalid results')
+            invocations = run.get('invocations', [])
+            if not isinstance(invocations, list) or any(
+                not isinstance(invocation, dict) or invocation.get('executionSuccessful') is False
+                for invocation in invocations
+            ):
+                raise ValueError('scanner invocation did not complete')
             rules = run.get('tool',{}).get('driver',{}).get('rules',[])
             if not isinstance(rules,list):
                 raise ValueError('invalid rules')

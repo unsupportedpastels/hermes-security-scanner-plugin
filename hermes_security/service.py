@@ -616,6 +616,82 @@ class SecurityService:
         self._filters(filters, {'q', 'status', 'repo_key', 'limit', 'offset'})
         return self.store.list_scans(**filters)
 
+    def workbench_scans(self, *, q=None, status=None, mode=None, limit=50, offset=0):
+        """Read-only SQL pagination including the desktop's scan-mode filter."""
+        self._filters(dict(q=q, status=status, mode=mode, limit=limit, offset=offset),
+                      {'q', 'status', 'mode', 'limit', 'offset'})
+        terms, args = [], []
+        for key, value in [('status', status), ('mode', mode)]:
+            if value is not None:
+                terms.append(key + '=?'); args.append(value)
+        if q:
+            terms.append('(root LIKE ? OR scan_id LIKE ?)'); args.extend(['%' + q + '%'] * 2)
+        where = ' WHERE ' + ' AND '.join(terms) if terms else ''
+        with self.store._connection() as conn:
+            total = conn.execute('SELECT count(*) FROM scans' + where, args).fetchone()[0]
+            ids = conn.execute('SELECT scan_id FROM scans' + where + ' ORDER BY rowid DESC LIMIT ? OFFSET ?', args + [limit, offset])
+            items = [self.store._scan(conn, row[0]) for row in ids]
+            for item in items:
+                # Findings are indexed at seal time; unsealed scans have no counts yet.
+                item['counts'] = None if not item['sealed_at'] else {
+                    sev: n for sev, n in conn.execute(
+                        'SELECT severity,count(DISTINCT finding_id) FROM findings WHERE scan_id=? GROUP BY severity',
+                        (item['scan_id'],))}
+        return {'items': items, 'total': total}
+
+    def workbench_findings(self, *, q=None, triage=None, severity=None, evidence_state=None,
+                           validation_level=None, repo_key=None, owasp=None, source=None,
+                           chained=None, limit=50, offset=0):
+        """Filter all workbench fields before LIMIT; never select evidence blobs.
+
+        The v1 store lacks validation-level/source filters. Keep this additive
+        query here rather than exposing database access to HTTP handlers.
+        Source accepts worker/detector provenance or an exact detector name.
+        """
+        filters = dict(q=q, triage=triage, severity=severity, evidence_state=evidence_state,
+                       validation_level=validation_level, repo_key=repo_key, owasp=owasp,
+                       source=source, chained=chained, limit=limit, offset=offset)
+        self._filters(filters, filters.keys())
+        terms, args = [], []
+        for key, value in [('severity', severity), ('evidence_state', evidence_state), ('repo_key', repo_key),
+                           ('chained', None if chained is None else int(chained))]:
+            if value is not None:
+                terms.append('f.' + key + '=?'); args.append(value)
+        if triage is not None:
+            terms.append("COALESCE(t.state,'open')=?"); args.append(triage)
+        if validation_level is not None:
+            terms.append("json_extract(f.data,'$.validation.level')=?"); args.append(validation_level)
+        if owasp is not None:
+            terms.append('EXISTS(SELECT 1 FROM json_each(f.owasp) WHERE value=?)'); args.append(owasp)
+        if source is not None:
+            terms.append("(json_extract(f.data,'$.source')=? OR EXISTS(SELECT 1 FROM json_each(f.detectors) WHERE value=?) "
+                         "OR (?='detector' AND json_array_length(f.detectors)>0) "
+                         "OR (?='worker' AND json_array_length(json_extract(f.data,'$.provenance.workerAttemptIds'))>0))")
+            args.extend([source] * 4)
+        if q:
+            columns = ['title', 'path', 'category', 'cwe', 'chain_text', 'root', 'repo_key']
+            terms.append('(' + ' OR '.join('f.' + key + ' LIKE ?' for key in columns) + ')')
+            args.extend(['%' + q + '%'] * len(columns))
+        base = ' FROM findings f LEFT JOIN triage t ON t.finding_id=f.finding_id'
+        if terms:
+            base += ' WHERE ' + ' AND '.join(terms)
+        columns = ('f.finding_id,f.occurrence_id,f.scan_id,f.severity,f.evidence_state,f.title,f.repo_key,f.root,'
+                   'f.path,f.category,f.cwe,f.owasp,f.detectors,f.chained,f.sealed_at,'
+                   "json_extract(f.data,'$.validation.level') AS validation_level,"
+                   "COALESCE(t.state,'open') AS triage_state,t.note AS triage_note,t.updated_at AS triage_updated_at")
+        with self.store._connection() as conn:
+            total = conn.execute('SELECT count(*)' + base, args).fetchone()[0]
+            items = []
+            for row in conn.execute('SELECT ' + columns + base + ' ORDER BY f.rowid DESC LIMIT ? OFFSET ?', args + [limit, offset]):
+                item = dict(row)
+                for key in ('cwe', 'owasp', 'detectors'):
+                    item[key] = json.loads(item[key])
+                item['chained'] = bool(item['chained'])
+                item['triage'] = {'state': item.pop('triage_state'), 'note': item.pop('triage_note'),
+                                  'updated_at': item.pop('triage_updated_at')}
+                items.append(item)
+        return {'items': items, 'total': total}
+
     def activity(self, scan_id, after_id=0, limit=200):
         self._scan(scan_id)
         return {'items': self.store.events(scan_id, after_id=after_id, limit=limit)}

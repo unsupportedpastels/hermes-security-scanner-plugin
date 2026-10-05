@@ -32,9 +32,14 @@ def build_coverage(scan, inventory, units, attempts, detector_runs, packets, fin
             gaps.append('Worker packet ' + packet['packetId'] + ' has no accepted result.')
     if scan['options'].get('truncated'):
         gaps.append('Inventory was truncated.')
+    for excluded in scan['options'].get('excluded', []):
+        # Scope/policy exclusions are intentional; unreadable or unsafe files are not.
+        if excluded['reason'] not in {'out_of_scope', 'git_metadata', 'vendored'}:
+            gaps.append('Excluded ' + excluded['path'] + ': ' + excluded['reason'])
     for run in detector_runs:
-        if run['status'] != 'ok':
-            gaps.append('Detector ' + run['detector'] + ' did not complete: ' + run['status'])
+        if run['status'] != 'ok' or run.get('truncated') or run.get('error'):
+            gaps.append('Detector ' + run['detector'] + ' did not complete: ' +
+                        (run.get('error') or ('output truncated' if run.get('truncated') else run['status'])))
     return {'documentType': 'hermes-security.coverage', 'schemaVersion': '1.0', 'scanId': scan['scan_id'],
             'completeness': 'partial' if gaps else 'complete',
             'files': {'total': len(files), 'reviewed': sum(f['state'] in done for f in files),

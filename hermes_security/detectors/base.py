@@ -38,6 +38,7 @@ def safe_run(argv, *, target, work_dir, timeout_s=600, max_output_bytes=50*1024*
     work.mkdir(parents=True, exist_ok=True, mode=0o700)
     started = time.monotonic()
     buffers = [bytearray(), bytearray()]
+    clipped = [False, False]
     truncated = False
     timed_out = False
     with tempfile.TemporaryDirectory(prefix='home-', dir=work) as home:
@@ -66,6 +67,7 @@ def safe_run(argv, *, target, work_dir, timeout_s=600, max_output_bytes=50*1024*
                     remaining = max(0, max_output_bytes-len(buf))
                     buf.extend(data[:remaining])
                     truncated |= len(data)>remaining
+                    clipped[key.data] |= len(data)>remaining
         proc.stdout.close(); proc.stderr.close()
         try:
             proc.wait(timeout=max(0.01, timeout_s-(time.monotonic()-started)))
@@ -78,8 +80,13 @@ def safe_run(argv, *, target, work_dir, timeout_s=600, max_output_bytes=50*1024*
             proc.wait()
     from .secrets import redact_text
     paths = []
-    for name, data in zip(('stdout', 'stderr'), buffers):
+    for index, (name, data) in enumerate(zip(('stdout', 'stderr'), buffers)):
         fd, filename = tempfile.mkstemp(prefix=name+'-', suffix='.log', dir=work)
+        if clipped[index] or timed_out:
+            # A cutoff can turn a credential into an unrecognizable fragment.
+            # Discard the unfinished line before scrubbing/persisting any bytes.
+            end = data.rfind(b'\n')
+            data = data[:end + 1] if end >= 0 else b''
         scrubbed = redact_text(bytes(data).decode('utf-8', 'replace')).encode('utf-8')
         truncated |= len(scrubbed)>max_output_bytes
         with os.fdopen(fd, 'wb') as stream:
