@@ -5,9 +5,20 @@ validation receipts, and coverage together. Standard, Deep, and Diff review mode
 share a Python/SQLite core. Reports distinguish code-supported findings from
 issues confirmed by a test, and keep rejected or inconclusive candidates visible.
 
-This repository is under development. The scaffold alone does not run scans;
-service registration, CLI, and workbench modules must be present before use.
 `docs/CONTRACT.md` defines the implementation contract.
+
+## Install from GitHub
+
+Requires Python 3.11+ and Hermes 0.21.5 or later. The repository is private, so
+the machine needs GitHub access to it (for example `gh auth login`).
+
+```sh
+hermes plugins install unsupportedpastels/hermes-security-scanner-plugin --enable
+```
+
+Restart Hermes afterwards. To update later, run the same command with `--force`.
+For the Desktop workbench, copy the installed plugin's `desktop/` folder as
+described below, using `$HERMES_HOME/plugins/hermes-security` as the source path.
 
 ## Install from a local checkout
 
