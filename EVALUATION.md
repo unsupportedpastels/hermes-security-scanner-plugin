@@ -145,8 +145,10 @@ catalogue and the `<path>/<function|construct>` anchor convention, because exact
 ruleId+anchor matching otherwise measures vocabulary, not detection. That disclosure,
 and the public fixtures, make this a **development run, not a blind holdout**.
 All 26 scans sealed and verified with no service errors. Raw scorer output:
-`evals/model-dev-run-1.txt` (index: `evals/model-dev-runs-1-5-index.json`, run 1; bundles stayed
-in private scratch storage).
+`evals/model-dev-run-1.txt` (index: `evals/model-dev-runs-1-5-index.json`, run 1). The sealed bundles for
+runs 1–5 were written to private scratch storage, which prunes idle entries after 24 hours; they have been
+pruned and the recorded numbers can no longer be re-scored. Future model runs must write bundles under
+`evals/bundles/<run>/` (git-ignored, durable) so `--score-bundles` can be re-run against them.
 
 Gate | Threshold | Measured | Status
 --- | --- | --- | ---
@@ -284,5 +286,5 @@ FAIL), including five-run agreement. Paired upstream parity remains **NOT RUN**.
 Final separate full-suite command returned:
 
 ```text
-444 passed, 5 skipped, 1 xfailed in 17.89s
+448 passed, 5 skipped, 1 xfailed in 17.87s
 ```

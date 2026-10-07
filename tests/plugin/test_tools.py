@@ -55,9 +55,18 @@ def test_result_cap_stays_valid_json():
     assert result["ok"] and result["truncated"] and result["pagination_hint"]
     assert result["scan_id"] == "s"
     assert result["offset"] == 0
-    service.result = {"scanId": "new_scan", "packets": ["x" * 70000]}
+    service.result = {"scanId": "new_scan", "snapshotDigest": "sha256:abc", "methodologyVersion": "m1",
+                      "submit": {"tool": "security_scan_submit_worker_result"}, "secret_blob": "y" * 600,
+                      "packets": [{"packetId": "pkt_" + str(i), "files": ["x" * 70000]} for i in range(3)]}
     raw = make_handler("security_scan_start", lambda: service)({"path": "/repo"})
-    assert json.loads(raw)["scan_id"] == "new_scan"
+    result = json.loads(raw)
+    assert len(raw) <= MAX_RESULT_CHARS and result["scan_id"] == "new_scan" and result["result_omitted"]
+    # The truncated envelope keeps the small header an agent needs to continue; bulk and long values stay out.
+    header = result["header"]
+    assert header["scanId"] == "new_scan" and header["snapshotDigest"] == "sha256:abc"
+    assert header["methodologyVersion"] == "m1" and header["submit"]["tool"] == "security_scan_submit_worker_result"
+    assert header["packetIds"] == ["pkt_0", "pkt_1", "pkt_2"]
+    assert "secret_blob" not in header and "packets" not in header and "summary" in result["pagination_hint"]
 
 
 @pytest.mark.parametrize("suffix,args,method", [

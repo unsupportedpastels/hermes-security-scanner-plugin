@@ -5,10 +5,15 @@ from hermes_security.compat.codex_import import import_codex_bundle
 from hermes_security.domain.validate import validate_document
 from hermes_security.errors import ValidationError
 
-UPSTREAM=Path('/home/mark/.hermes/cache/scratch/codex-security-research/plugins/codex-security/examples/completed-scan')
+# Vendored verbatim from openai/codex-security@89aae24 (tests/fixtures/upstream/.../SOURCE.txt); never skip.
+UPSTREAM=Path(__file__).resolve().parents[1]/'fixtures'/'upstream'/'codex-security-completed-scan'
+
+def test_vendored_upstream_fixture_present():
+    assert UPSTREAM.is_dir(), 'vendored upstream fixture missing: ' + str(UPSTREAM)
+    for name in ('findings.json','coverage.json','scan-manifest.json','report.md','LICENSE','SOURCE.txt'):
+        assert (UPSTREAM/name).is_file(), name
 
 def test_real_upstream_bundle_is_loss_preserving():
-    if not UPSTREAM.exists(): pytest.skip('upstream checkout unavailable')
     result=import_codex_bundle(UPSTREAM)
     assert result == import_codex_bundle(UPSTREAM)
     for filename,doc in result.items():
@@ -27,7 +32,6 @@ def test_missing_bundle_rejected(tmp_path):
 
 @pytest.mark.parametrize('mutation', ['cross-scan', 'non-finite', 'secret', 'duplicate', 'symlink'])
 def test_untrusted_upstream_rejected(tmp_path, mutation):
-    if not UPSTREAM.exists(): pytest.skip('upstream checkout unavailable')
     for name in ('findings.json','coverage.json','scan-manifest.json'):
         (tmp_path/name).write_bytes((UPSTREAM/name).read_bytes())
     path=tmp_path/'findings.json'

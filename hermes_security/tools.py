@@ -35,7 +35,7 @@ TOOL_SCHEMAS = [
     }, ["path"]),
     _schema("get", "Read scan state or one paginated section before continuing a review. Read every page; incomplete coverage is not a clean result.", {
         "scan_id": _SCAN,
-        "section": _field("string", "Section to read, such as inventory, candidates, coverage, or activity."),
+        "section": _field("string", "Section to read: summary (scan header: digest, methodology, submit instructions, packet IDs), packets, inventory, candidates, coverage, workers, detectors, validations, chains, activity, findings, manifest, or report. Use summary then packets when a start or get result is truncated."),
         "limit": _field("integer", "Maximum records per page; reduce if the response is truncated.", minimum=1, maximum=500, default=50),
         "offset": _field("integer", "Zero-based page offset.", minimum=0, default=0),
     }, ["scan_id"]),
@@ -123,13 +123,25 @@ def encode_result(result, *, args=None, cap=True):
         args = args or {}
         # Do not cut JSON mid-string or suggest that omitted records were returned.
         envelope = {"ok": True, "truncated": True, "result_omitted": True,
-                    "pagination_hint": "Use security_scan_get with a section and smaller limit at the same offset; use CLI get or export --out for full output.",
+                    "pagination_hint": "Use security_scan_get with section 'summary' for the scan header, then section 'packets' (or another section) with a smaller limit at the same offset; use CLI get or export --out for full output.",
                     "limit": max(1, args.get("limit", 50) // 2), "offset": args.get("offset", 0)}
         scan_id = args.get("scan_id")
         if not scan_id and isinstance(result, dict):
             scan_id = result.get("scanId", result.get("scan_id"))
         if isinstance(scan_id, str) and len(scan_id) <= 256:
             envelope["scan_id"] = scan_id
+        if isinstance(result, dict):
+            # Keep the small header fields (digest, methodology, submit instructions, packet IDs) so a
+            # truncated start/get result is still actionable without the omitted bulk.
+            header: dict = {k: v for k, v in result.items()
+                            if isinstance(v, (str, int, float, bool)) and len(json.dumps(v)) <= 512}
+            if isinstance(result.get("submit"), dict):
+                header["submit"] = result["submit"]
+            if isinstance(result.get("packets"), list):
+                header["packetIds"] = [p.get("packetId") for p in result["packets"] if isinstance(p, dict)][:500]
+            raw_header = json.dumps(export_document(header), ensure_ascii=True, allow_nan=False)
+            if header and len(raw_header) <= 8_000:
+                envelope["header"] = json.loads(raw_header)
         raw = json.dumps(envelope)
     return raw
 

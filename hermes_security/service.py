@@ -180,6 +180,17 @@ class SecurityService:
             raise ValidationError('section must be text')
         if section is None:
             return {**scan, 'scanId': scan_id, 'plan': self._plan(scan)}
+        if section == 'summary':
+            # Small header an agent can always read, even when the full plan exceeds the tool result cap.
+            plan = self._plan(scan, packets=[])
+            packets = self._packets(scan)
+            keep = ('scanId', 'root', 'snapshotDigest', 'methodologyVersion', 'surfaces', 'specialistProfiles',
+                    'workerBriefPath', 'submit', 'inventory', 'status')
+            return {**{k: plan[k] for k in keep}, 'mode': scan['mode'], 'safetyLevel': scan['safety_level'],
+                    'packetCount': len(packets), 'packetIds': [p['packetId'] for p in packets],
+                    'laneCount': len(plan['lanes']), 'excludedTotal': plan['excluded']['total'],
+                    'sections': ['summary', 'packets', 'inventory', 'coverage', 'candidates', 'findings', 'workers',
+                                 'detectors', 'validations', 'chains', 'activity', 'manifest', 'report']}
         if section == 'coverage':
             return self.coverage(scan_id)
         if section == 'activity':
@@ -193,6 +204,8 @@ class SecurityService:
             return json.loads(raw) if section == 'manifest' else {'content': raw.decode()}
         if section == 'inventory':
             rows = self.store.inventory(scan_id)
+        elif section == 'packets':
+            rows = self._packets(scan)
         elif section in {'findings', 'candidates'}:
             if section == 'findings' and scan['sealed_at']:
                 return self.store.list_findings(scan_id=scan_id, limit=limit, offset=offset)

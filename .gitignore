@@ -12,3 +12,5 @@ dist/
 *.db
 *.db-shm
 *.db-wal
+# Durable model-eval bundles (local only, never scratch); re-scored with scripts/run-evals.py --score-bundles
+evals/bundles/

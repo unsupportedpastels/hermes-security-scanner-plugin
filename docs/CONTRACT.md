@@ -13,9 +13,11 @@ If this contract and the plan disagree on a name/shape, this contract wins.
   `dashboard/plugin_api.py` may import `fastapi` (available in the Hermes venv).
 - Test interpreter: `/home/mark/.hermes/hermes-agent/venv/bin/python -m pytest` run from the repo root.
   Tests must not need network, Hermes runtime, or external scanners; skip cleanly when a tool is absent.
-- Upstream source of record (Apache-2.0): `/home/mark/.hermes/cache/scratch/codex-security-research`
-  at `openai/codex-security@89aae242136312467790947f3b122ca3f607614f` (subdir `plugins/codex-security`).
-  Copy/adapt only from there. Every adapted file starts with a modification notice:
+- Upstream source of record (Apache-2.0): openai/codex-security@89aae242136312467790947f3b122ca3f607614f. A checkout may
+  live at `/home/mark/.hermes/cache/scratch/codex-security-research` (scratch is pruned after 24h idle; re-clone and
+  `git checkout 89aae24` for `scripts/provenance.py`). The completed-scan example the compat tests need is vendored at
+  `tests/fixtures/upstream/codex-security-completed-scan/` so those tests never depend on scratch.
+  Copy/adapt only from that upstream commit (subdir `plugins/codex-security`). Every adapted file starts with a modification notice:
   `# Adapted from openai/codex-security@89aae24 <path> (Apache-2.0). Modified for hermes-security.`
   (JSON schemas: put it in `"$comment"`; Markdown: an HTML comment — first line for references, but
   in `SKILL.md` immediately after the YAML frontmatter because Hermes requires `---` at byte 0). Several upstream
@@ -371,7 +373,10 @@ Banned copy words in generated text: comprehensive, robust, seamless, delve, cri
 ## Service + tools (W2) — summary for W3 consumers
 
 `SecurityService(data_dir: Path, *, profile: str = "default")` wraps the store and all libraries. Methods mirror the
-tools and HTTP API: `start_scan(**opts)`, `get_scan(scan_id, section=None, limit, offset)`, `checkpoint(...)`,
+tools and HTTP API: `start_scan(**opts)`, `get_scan(scan_id, section=None, limit, offset)` (sections: `summary` = small
+header with scanId/root/snapshotDigest/methodologyVersion/submit/packetIds, always under the tool cap; `packets`
+paginated; plus inventory, coverage, candidates, findings, workers, detectors, validations, chains, activity, manifest,
+report), `checkpoint(...)`,
 `submit_worker_result(payload)`, `import_detector_results(scan_id, detector=None, sarif_path=None, run=False)`,
 `run_detectors(scan_id, names=None)`, `record_validations(scan_id, receipts|plans)`, `propose_chains(scan_id)`,
 `record_chains(scan_id, explanations)`, `finalize(scan_id)`, `cancel(scan_id)`, `resume(scan_id)`, `export(scan_id, fmt)`,
