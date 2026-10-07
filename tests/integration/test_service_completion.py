@@ -88,6 +88,7 @@ def test_config_context_and_importable_hermes_state(tmp_path, monkeypatch):
 
 def test_standalone_data_dir_matches_hermes_plugin_state(tmp_path, monkeypatch):
     # The standalone CLI must write where agent tools (ctx.state) and the dashboard read.
+    import os
     import sys
     from pathlib import Path
     from hermes_security.config import data_namespace, resolve_data_dir
@@ -95,7 +96,7 @@ def test_standalone_data_dir_matches_hermes_plugin_state(tmp_path, monkeypatch):
     monkeypatch.setitem(sys.modules, 'hermes_cli.plugins_state', None)
     fallback = resolve_data_dir()
     assert fallback == tmp_path / 'plugin-data' / data_namespace()
-    agent = Path('/home/mark/.hermes/hermes-agent')
+    agent = Path(os.environ.get('HERMES_AGENT_SRC', Path.home() / '.hermes' / 'hermes-agent'))
     if not (agent / 'hermes_cli' / 'plugins_manifest.py').is_file():
         pytest.skip('Hermes source not available')
     monkeypatch.syspath_prepend(str(agent))

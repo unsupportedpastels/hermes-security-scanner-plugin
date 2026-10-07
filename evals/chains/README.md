@@ -3,8 +3,8 @@
 Run from the repository root:
 
 ```sh
-/home/mark/.hermes/hermes-agent/venv/bin/python scripts/eval_chains.py
-/home/mark/.hermes/hermes-agent/venv/bin/python -m pytest tests/unit/test_chain_*.py -q
+python scripts/eval_chains.py
+python -m pytest tests/unit/test_chain_*.py -q
 ```
 
 The JSON files are synthetic, hand-labeled policy fixtures, not results from a real

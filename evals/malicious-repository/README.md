@@ -9,7 +9,7 @@ focused `/dev/null` reader and subprocess-output boundary probes.
 Run from the repository root:
 
 ```sh
-/home/mark/.hermes/hermes-agent/venv/bin/python -m pytest -q -p no:cacheprovider tests/integration/test_hostile_repository.py
+python -m pytest -q -p no:cacheprovider tests/integration/test_hostile_repository.py
 ```
 
 ## Cases and expected outcomes

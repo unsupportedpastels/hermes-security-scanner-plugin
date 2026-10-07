@@ -9,8 +9,7 @@ issues confirmed by a test, and keep rejected or inconclusive candidates visible
 
 ## Install from GitHub
 
-Requires Python 3.11+ and Hermes 0.21.5 or later. The repository is private, so
-the machine needs GitHub access to it (for example `gh auth login`).
+Requires Python 3.11+ and Hermes 0.21.5 or later.
 
 ```sh
 hermes plugins install unsupportedpastels/hermes-security-scanner-plugin --enable

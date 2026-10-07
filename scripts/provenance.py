@@ -19,7 +19,7 @@ HERMES = {
     "repository": "NousResearch/hermes-agent",
     "commit": "15cf1417e4c53ebea9d415abb5bcd6af8b1577d3",
 }
-DEFAULT_SOURCE = Path("/home/mark/.hermes/cache/scratch/codex-security-research")
+DEFAULT_SOURCE = Path(os.environ.get("HERMES_SECURITY_UPSTREAM", "codex-security"))
 NOTICE = re.compile(
     r'^\s*(?:#\s*|<!--\s*(?:#\s*)?|"\$comment"\s*:\s*")'
     r'Adapted from openai/codex-security@89aae24\s+'

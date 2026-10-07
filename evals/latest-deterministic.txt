@@ -2,14 +2,14 @@
   "gates": [
     {
       "command": [
-        "/home/mark/.hermes/hermes-agent/venv/bin/python",
+        "~/.hermes/hermes-agent/venv/bin/python",
         "-m",
         "pytest",
         "-q",
         "-p",
         "no:cacheprovider",
         "--ignore=tests/unit/test_run_evals.py",
-        "--junitxml=/home/mark/.hermes-dashboard/cache/scratch/security-contract-jaef3odj/result.xml",
+        "--junitxml=~/.hermes-dashboard/cache/scratch/security-contract-jaef3odj/result.xml",
         "tests"
       ],
       "gate": "deterministic-contract-tests",
@@ -27,14 +27,14 @@
     },
     {
       "command": [
-        "/home/mark/.hermes/hermes-agent/venv/bin/python",
+        "~/.hermes/hermes-agent/venv/bin/python",
         "-m",
         "pytest",
         "-q",
         "-p",
         "no:cacheprovider",
         "--ignore=tests/unit/test_run_evals.py",
-        "--junitxml=/home/mark/.hermes-dashboard/cache/scratch/security-contract-pfyvoujf/result.xml",
+        "--junitxml=~/.hermes-dashboard/cache/scratch/security-contract-pfyvoujf/result.xml",
         "tests/integration/test_end_to_end_static.py::test_end_to_end_static",
         "tests/integration/test_service_security.py::test_reject_candidate_citations_claims_and_secrets"
       ],
@@ -53,14 +53,14 @@
     },
     {
       "command": [
-        "/home/mark/.hermes/hermes-agent/venv/bin/python",
+        "~/.hermes/hermes-agent/venv/bin/python",
         "-m",
         "pytest",
         "-q",
         "-p",
         "no:cacheprovider",
         "--ignore=tests/unit/test_run_evals.py",
-        "--junitxml=/home/mark/.hermes-dashboard/cache/scratch/security-contract-2roxtk_r/result.xml",
+        "--junitxml=~/.hermes-dashboard/cache/scratch/security-contract-2roxtk_r/result.xml",
         "tests/integration/test_service_security.py::test_runtime_receipt_cannot_be_forged_by_worker_or_tool"
       ],
       "gate": "zero-fabricated-runtime-claims",
@@ -78,14 +78,14 @@
     },
     {
       "command": [
-        "/home/mark/.hermes/hermes-agent/venv/bin/python",
+        "~/.hermes/hermes-agent/venv/bin/python",
         "-m",
         "pytest",
         "-q",
         "-p",
         "no:cacheprovider",
         "--ignore=tests/unit/test_run_evals.py",
-        "--junitxml=/home/mark/.hermes-dashboard/cache/scratch/security-contract-zq8a4cyu/result.xml",
+        "--junitxml=~/.hermes-dashboard/cache/scratch/security-contract-zq8a4cyu/result.xml",
         "tests/integration/test_service_security.py::test_packet_scan_and_attempt_binding",
         "tests/integration/test_profile_isolation.py",
         "tests/unit/test_schemas.py::test_cross_scan_and_reference_checks"
@@ -105,14 +105,14 @@
     },
     {
       "command": [
-        "/home/mark/.hermes/hermes-agent/venv/bin/python",
+        "~/.hermes/hermes-agent/venv/bin/python",
         "-m",
         "pytest",
         "-q",
         "-p",
         "no:cacheprovider",
         "--ignore=tests/unit/test_run_evals.py",
-        "--junitxml=/home/mark/.hermes-dashboard/cache/scratch/security-contract-qid30m5i/result.xml",
+        "--junitxml=~/.hermes-dashboard/cache/scratch/security-contract-qid30m5i/result.xml",
         "tests/unit/test_detector_sarif.py::test_invalid_and_truncated",
         "tests/unit/test_schemas.py::test_nested_limits_and_unknowns",
         "tests/unit/test_target_hostile.py::test_hardlinks_classification_and_limits"
@@ -132,14 +132,14 @@
     },
     {
       "command": [
-        "/home/mark/.hermes/hermes-agent/venv/bin/python",
+        "~/.hermes/hermes-agent/venv/bin/python",
         "-m",
         "pytest",
         "-q",
         "-p",
         "no:cacheprovider",
         "--ignore=tests/unit/test_run_evals.py",
-        "--junitxml=/home/mark/.hermes-dashboard/cache/scratch/security-contract-ovshf3yr/result.xml",
+        "--junitxml=~/.hermes-dashboard/cache/scratch/security-contract-ovshf3yr/result.xml",
         "tests/integration/test_service_modes.py::test_missing_sections_retained_and_detector_unavailable",
         "tests/unit/test_standards_mapping.py"
       ],

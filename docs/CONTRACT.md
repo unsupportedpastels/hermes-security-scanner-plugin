@@ -1,21 +1,18 @@
 # hermes-security — implementation contract (authoritative for all workers)
 
 This file fixes names, shapes, and module boundaries so independent workers can
-build disjoint modules in parallel. The full product plan is
-`/home/mark/.hermes/plans/2026-10-05_014310-hermes-security-plugin.md`.
-If this contract and the plan disagree on a name/shape, this contract wins.
+build disjoint modules in parallel. It supersedes the original product plan (not included in this repository).
 
 ## Ground rules
 
-- Repo: `/home/mark/hermes-security` (local git, **no remote; never push or post anywhere**).
+- Repo: https://github.com/unsupportedpastels/hermes-security-scanner-plugin (public, Apache-2.0).
 - Plugin id / manifest name: `hermes-security`. Python package: `hermes_security`. Toolset: `security`.
 - Runtime: Python 3.11+, **stdlib only** in `hermes_security/` (no jsonschema, no pydantic).
   `dashboard/plugin_api.py` may import `fastapi` (available in the Hermes venv).
-- Test interpreter: `/home/mark/.hermes/hermes-agent/venv/bin/python -m pytest` run from the repo root.
+- Test interpreter: a Python 3.11+ environment with pytest (the Hermes venv works), `python -m pytest` from the repo root.
   Tests must not need network, Hermes runtime, or external scanners; skip cleanly when a tool is absent.
-- Upstream source of record (Apache-2.0): openai/codex-security@89aae242136312467790947f3b122ca3f607614f. A checkout may
-  live at `/home/mark/.hermes/cache/scratch/codex-security-research` (scratch is pruned after 24h idle; re-clone and
-  `git checkout 89aae24` for `scripts/provenance.py`). The completed-scan example the compat tests need is vendored at
+- Upstream source of record (Apache-2.0): openai/codex-security@89aae242136312467790947f3b122ca3f607614f. For
+  `scripts/provenance.py`, clone it, `git checkout 89aae24`, and pass `--source-root` or set `HERMES_SECURITY_UPSTREAM`. The completed-scan example the compat tests need is vendored at
   `tests/fixtures/upstream/codex-security-completed-scan/` so those tests never depend on scratch.
   Copy/adapt only from that upstream commit (subdir `plugins/codex-security`). Every adapted file starts with a modification notice:
   `# Adapted from openai/codex-security@89aae24 <path> (Apache-2.0). Modified for hermes-security.`

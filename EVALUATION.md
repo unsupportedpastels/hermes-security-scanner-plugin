@@ -9,8 +9,8 @@ release-quality claim. No model was called to generate this report.
 From the repository root, using the environment with pytest installed:
 
 ```sh
-/home/mark/.hermes/hermes-agent/venv/bin/python scripts/run-evals.py --deterministic
-/home/mark/.hermes/hermes-agent/venv/bin/python -m pytest -q -p no:cacheprovider
+python scripts/run-evals.py --deterministic
+python -m pytest -q -p no:cacheprovider
 ```
 
 `--deterministic` is the default. Output is one JSON object followed by a Markdown
@@ -78,7 +78,7 @@ and model metadata. Keep gold hidden from the scanning model. A real independent
 holdout and human root-cause adjudication are still required before release.
 
 ```sh
-/home/mark/.hermes/hermes-agent/venv/bin/python scripts/run-evals.py --score-bundles /path/to/sealed-bundles
+python scripts/run-evals.py --score-bundles /path/to/sealed-bundles
 ```
 
 Supply `/path/to/sealed-bundles/index.json`:
@@ -212,7 +212,7 @@ iac-vulnerable (anchor `main.tf/ingress` once, `main.tf/resource` four times).
 Gate definition:
 
 ```sh
-/home/mark/.hermes/hermes-agent/venv/bin/python scripts/run-evals.py --score-bundles /path/to/five-run-bundles
+python scripts/run-evals.py --score-bundles /path/to/five-run-bundles
 ```
 
 Use exactly five independently collected runs for each identical provider/model
@@ -226,7 +226,7 @@ alongside it. No assertion of independence can be proved from artifacts alone.
 ### Paired upstream comparison (NOT RUN)
 
 ```sh
-/home/mark/.hermes/hermes-agent/venv/bin/python scripts/compare-upstream.py --pairs /path/to/paired-bundles/pairs.json
+python scripts/compare-upstream.py --pairs /path/to/paired-bundles/pairs.json
 ```
 
 Index shape:
