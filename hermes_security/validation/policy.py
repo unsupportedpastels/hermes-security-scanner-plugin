@@ -38,11 +38,11 @@ def _time(value):
         raise PolicyDenied('invalid expiry/time') from exc
 
 def mint_grant(store, scan_id, *, origins, actions, expires_in_s, max_requests, created_by='user-command'):
-    """Called only by trusted slash/CLI dispatch, never registered as an agent tool.
+    """Called only by trusted slash/CLI/dashboard dispatch, never an agent tool.
 
     The caller must establish user provenance; a Python argument is not authentication.
     """
-    if created_by not in {'user-command', 'user-cli'}:
+    if created_by not in {'user-command', 'user-cli', 'dashboard'}:
         raise PolicyDenied('only a direct user command may mint grants')
     if (not isinstance(actions,list) or not actions or not set(actions)<=ACTIONS or
         type(expires_in_s) is not int or expires_in_s<=0 or type(max_requests) is not int or max_requests<=0 or

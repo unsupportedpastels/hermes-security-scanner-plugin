@@ -809,6 +809,13 @@ class SecurityStore:
                 )
             return item
 
+    def list_grants(self, scan_id):
+        with self._connection() as c:
+            self._scan(c, scan_id)
+            return [json.loads(row[0]) for row in c.execute(
+                "SELECT data FROM validation_grants WHERE scan_id=? ORDER BY rowid DESC", (scan_id,)
+            )]
+
     def get_grant(self, grant_id):
         with self._connection() as c:
             row = c.execute(

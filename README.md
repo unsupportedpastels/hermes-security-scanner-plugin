@@ -55,8 +55,8 @@ Agent tools in the `security` toolset:
 
 The `/security` slash command supports `status`,
 `authorize-validation <scan> <origin> [--actions ..] [--minutes N]`, and
-`revoke <grant>`. Only user commands/CLI can grant active validation; agent tools
-cannot authorize themselves.
+`revoke <grant>`. Only direct user commands/CLI or confirmed Desktop clicks can grant active validation;
+agent tools cannot authorize themselves.
 
 The service also exposes `hermes security-review ...` and
 `python -m hermes_security ...` for terminal and subagent use. Consult their
@@ -76,6 +76,46 @@ Exports include Markdown, JSON, CSV, and SARIF.
 A finding becomes runtime-confirmed only with a passed receipt, paired positive
 and negative controls, and a non-static validation level. Unrun tests are
 `NOT_RUN`, not proof. Changes to target code remain a separate user action.
+
+### Using the Desktop page
+
+Choose **+ Scan**, then one of:
+
+- **Just read the code (safest)** — prepares a chat draft, as before.
+- **Read the code and test bugs on this computer** — read the warning and check
+  **I understand this will run commands from this code on my computer**, then
+  **Create scan**. The scan is created without running code. Use **Open in chat**
+  to review the code and prepare test steps without finishing the scan. Paste the
+  agent's JSON list into **Test steps (paste from chat)**, inspect its commands,
+  click **Test the bugs on this computer**, and confirm. This runs the existing
+  bounded local-command runner and shows **Test results**, output, and cleanup.
+- **Read the code and test my running app** — check
+  **I understand this will send test requests to my running app** and **Create scan**.
+  Under **Test the bugs**, enter your app address (scheme, host, and port only),
+  minutes (1–240), and request limit (1–200), then click
+  **Allow testing my running app** and confirm. The page shows
+  **App testing: allowed** / **App testing: not allowed**, the address, expiry,
+  and requests used. Use **Open in chat** to ask the agent to test this existing
+  scan using the displayed permission ID. **Stop allowing app testing** confirms
+  and revokes that permission; it cannot undo requests already sent.
+
+Only the user's click gives permission. Starting a scan never executes test code
+or sends requests. Local tests require another explicit click for every submitted
+plan; an agent cannot reuse it to execute local commands. App tests may be executed
+by the agent only within an existing, unexpired, unrevoked permission's scope and
+request limit. Finish/seal the scan only after testing; finished scans cannot take
+new results. Static scans gain no execution authority from these controls.
+
+“On this computer” means the computer running Hermes, which may be a remote host,
+not the Desktop client. A temporary copy and resource limits are **not** filesystem
+isolation against harmful code. Network isolation can be best-effort. Run only
+trusted, reviewed commands. No application is started automatically.
+
+For CLI users, the unchanged equivalent is `start --safety-level local-safe
+--allow-local`, then `validate --scan <id> --file <plans.json> --allow-local`.
+The authenticated dashboard is also a user-authorization surface, not an agent
+API. A confirmation field supplements host session authentication; it is not a
+replacement for it. Never expose the plugin router without the host's auth.
 
 ## Data and limitations
 

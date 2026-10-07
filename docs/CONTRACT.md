@@ -323,7 +323,7 @@ unit `detector:<name>` state `unsupported` (never `reviewed`). Failures/timeouts
 ```python
 POLICY: static default; local-safe requires options["allowLocalValidation"] set by the user; active-authorized requires a grant.
 mint_grant(store, scan_id, *, origins: list[str], actions: list[str], expires_in_s: int, max_requests: int, created_by="user-command") -> dict
-  # ONLY called from the /security slash command & CLI; never exposed as an agent tool
+  # ONLY called from direct user slash/CLI or confirmed authenticated dashboard routes; never an agent tool
 check_plan(plan: dict, *, grant: dict | None, safety_level, now) -> None  # raises PolicyDenied
   # plan {"candidateId","level","kind":"static|local-command|http-probe","commands":[argv...],"requests":[{"method","url","headers","body"}],
   #       "positiveControl":{...},"negativeControl":{...},"cleanup":{...},"timeoutS","maxOutputBytes"}
@@ -393,3 +393,51 @@ security_scan_import_detector_results, security_scan_record_validations, securit
 security_scan_finalize, security_scan_cancel, security_scan_export`.
 Slash command `/security` (status | authorize-validation <scan> <origin> [--actions ..] [--minutes N] | revoke <grant>).
 CLI `hermes security-review ...` and `python -m hermes_security ...` expose the same service for subagents/terminal use.
+
+## Dashboard user consent and execution
+
+The host mounts `dashboard/plugin_api.py` beneath `/api/plugins/hermes-security`
+behind its session-token authentication. Do not mount this router publicly without
+that authentication. Body confirmation guards accidental requests; knowing a scan
+ID is not authentication. No new agent tools are registered. `tools.py` continues
+to pass `user_authorized=False` for validation regardless of scan options.
+
+- `POST /scans`: accepts service options plus `safetyLevel` (alias of
+  `safety_level`, reject both together). To opt into `local-safe`, require literal
+  `allowLocalValidation: true` and `confirm: "local-safe"`; missing/mismatched
+  confirmation returns 400. Only then supply `user_authorized=True` and
+  `authorization_source="dashboard"` to `start_scan`. Store
+  `options.authorizationSource="dashboard"`. This creates a snapshot, not a test.
+  Static/default starts and active-authorized starts have no execution authority.
+  Client-supplied `user_authorized`/`authorization_source` are rejected.
+- `GET /scans/{scan_id}/grants`: `{items: [grant, ...]}` for this profile and scan,
+  including expiry, used/maxRequests, and revoked state.
+- `POST /scans/{scan_id}/authorize-validation`: `{confirm: scan_id, origin,
+  minutes?: 30, maxRequests?: 20}`. Requires an active-authorized scan (403 otherwise).
+  Reuses `mint_grant` with `created_by="dashboard"`, actions fixed to `["http-probe"]`,
+  CLI origin syntax (scheme://host[:port], no credentials/path/query/fragment),
+  1–240 minutes and 1–200 requests. Returns the stored grant.
+- `POST /scans/{scan_id}/grants/{grant_id}/revoke`: `{confirm: scan_id}`. Reject
+  a grant from another scan (400); reuse existing revoke/lease/seal checks and
+  return the stored revoked grant.
+- `POST /scans/{scan_id}/run-validation`: `{confirm: scan_id, plans: [...]}`.
+  Requires local-safe (403 otherwise), a nonempty bounded list of local-command,
+  local-safe plans with candidate IDs, paired controls and cleanup. Execute through
+  `record_validations(..., user_authorized=True, authorization_source="dashboard")`.
+  Receipts retain `User authorization source: dashboard` in notes (included in
+  receipt identity). Return `{scanId, receipts}` read back from the store.
+
+All three scan-scoped POST actions reject missing, non-string, or mismatched
+confirmation with 400 before any mutation. All errors remain public-safe, never
+reflecting supplied paths/secrets. Existing snapshot checks, leases, scan status,
+seal protection, operation budgets, runner policy and redaction remain in force.
+Grants never let agent calls run local commands. Successful mutations broadcast
+`scan.updated`; the UI refreshes stored permissions and test results.
+
+Desktop uses everyday-language choices and buttons. Non-static choices reveal an
+unchecked warning checkbox; changes of choice reset it. Creating the scan opens
+its detail page; **Open in chat** continues the existing scan, not a replacement.
+**Test the bugs on this computer**, **Allow testing my running app**, and
+**Stop allowing app testing** each require a user confirmation dialog. Read-only
+scans retain the chat-draft path. Do not mistake creating a scan or allowing app
+tests for executed findings: only returned test results prove execution.

@@ -131,7 +131,7 @@ class SecurityService:
                 'inventory': {'files': len(inventory), 'bytes': sum(f['size'] for f in inventory), 'lines': sum(f['lines'] for f in inventory), 'truncated': scan['options']['truncated']},
                 'excluded': {'total': len(excluded), 'items': excluded}, 'status': scan['status'], 'diff': scan['options'].get('diff')}
 
-    def start_scan(self, **opts):
+    def start_scan(self, *, user_authorized=False, authorization_source=None, **opts):
         self._safe(opts)
         allowed = {'path', 'mode', 'scope', 'base', 'head', 'safety_level', 'allowLocalValidation', 'deep_passes',
                    'budget', 'notes', 'detectors', 'detectorOptions', 'semgrep_config', 'provider', 'model'}
@@ -163,6 +163,8 @@ class SecurityService:
             raise Conflict('explicit diff head must be the clean checked-out revision; use a separate worktree')
         inventory = target.build_inventory(resolved)
         resolved.update(snapshotDigest=target.snapshot_digest(inventory, resolved), fileCount=len(inventory['files']))
+        if user_authorized is True and authorization_source == 'dashboard':
+            opts['authorizationSource'] = 'dashboard'
         options = {**opts, 'surfaces': sorted(ledger.detect_surfaces(inventory['files'])), 'deep_passes': passes,
                    'excluded': inventory['excluded'], 'truncated': inventory['truncated']}
         if mode == 'diff':
@@ -390,7 +392,7 @@ class SecurityService:
                 row['validation'] = {'status': last['status'], 'level': last['level'], 'receiptIds': [r['receiptId'] for r in rs], 'summary': '; '.join(last.get('notes', []))}
         return rows
 
-    def record_validations(self, scan_id, receipts=None, plans=None, *, user_authorized=False):
+    def record_validations(self, scan_id, receipts=None, plans=None, *, user_authorized=False, authorization_source=None):
         if receipts is not None and plans is not None:
             raise ValidationError('choose receipts or plans')
         inputs = plans if plans is not None else receipts
@@ -434,9 +436,9 @@ class SecurityService:
                     grant = None
                     if level == 'local-safe' and (scan['safety_level'] != 'local-safe' or user_authorized is not True):
                         raise PolicyDenied('local-safe execution requires scan opt-in and a direct user-authorized call')
-                    # Local commands are CLI-only; a grant must not let agent tool calls run them.
+                    # Local commands require a direct user call; grants never authorize agents.
                     if item.get('kind') == 'local-command' and level != 'local-safe':
-                        raise PolicyDenied('local commands require a local-safe scan and the CLI --allow-local flag')
+                        raise PolicyDenied('local commands require a local-safe scan and explicit user authorization')
                     if level == 'active-authorized':
                         if scan['safety_level'] != 'active-authorized':
                             raise PolicyDenied('active-authorized execution requires an active-authorized scan')
@@ -460,6 +462,9 @@ class SecurityService:
                             receipt = validation.run_http(plan, grant=grant, store=self.store)
                         else:
                             receipt = validation.run_local(plan, target=scan['target'], workdir_parent=self._work(scan_id), grant=grant)
+                if plans is not None and user_authorized is True and authorization_source == 'dashboard':
+                    receipt['notes'].append('User authorization source: dashboard')
+                    receipt['receiptId'] = stable_id('vrc', {k: v for k, v in receipt.items() if k != 'receiptId'})
                 self._safe(receipt)
                 existing = next((r for r in self.store.validations(scan_id) if r['receiptId'] == receipt['receiptId']), None)
                 if existing is not None and existing != receipt:
@@ -747,13 +752,17 @@ class SecurityService:
         self._filters(filters, {'limit', 'offset'})
         return self.store.list_repositories(**filters)
 
+    def list_grants(self, scan_id):
+        self._scan(scan_id)
+        return {'items': self.store.list_grants(scan_id)}
+
     def mint_grant(self, scan_id, **opts):
-        """USER-ONLY: direct slash command/CLI; never register this as an agent tool."""
+        """USER-ONLY: direct slash command/CLI/dashboard; never an agent tool."""
         with self._mutation(scan_id):
             return validation.mint_grant(self.store, scan_id, **opts)
 
     def revoke_grant(self, grant_id):
-        """USER-ONLY: direct slash command/CLI; never register this as an agent tool."""
+        """USER-ONLY: direct slash command/CLI/dashboard; never an agent tool."""
         if not isinstance(grant_id, str):
             raise ValidationError('grantId must be text')
         grant = self.store.get_grant(grant_id)

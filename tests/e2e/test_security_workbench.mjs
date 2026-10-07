@@ -96,6 +96,111 @@ function render(node) {
   return render(node.props?.children)
 }
 
+test('validation controls expose level-specific consent and grant state', () => {
+  const local = render(plugin.ValidationControls({ id: 'scan_test', scan: { safetyLevel: 'local-safe', status: 'awaiting_analysis' } }))
+  assert.match(local, /Test the bugs on this computer/)
+  assert.match(local, /does not protect your other files/)
+  assert.doesNotMatch(local, /Allow testing my running app/)
+  const active = render(plugin.ValidationControls({ id: 'scan_test', scan: { safetyLevel: 'active-authorized', status: 'awaiting_analysis' } }))
+  assert.match(active, /Allow testing my running app/)
+  assert.doesNotMatch(active, /Test the bugs on this computer/)
+  const staticView = render(plugin.ValidationControls({ id: 'scan_test', scan: { safetyLevel: 'static' } }))
+  assert.doesNotMatch(staticView, /Allow testing my running app|Test the bugs on this computer/)
+})
+
+test('validation click cancellation sends nothing; accepted click sends exact scan confirmation', async () => {
+  const before = env.calls.length
+  globalThis.window = { confirm: () => false }
+  assert.equal(await plugin.confirmValidation('scan_test', 'run-validation', { plans: [] }, 'Run?'), null)
+  assert.equal(env.calls.length, before)
+  window.confirm = () => true
+  env.response = { scanId: 'scan_test', receipts: [] }
+  await plugin.confirmValidation('scan_test', 'run-validation', { plans: [] }, 'Run?')
+  assert.equal(env.calls.at(-1).path, '/scans/scan_test/run-validation')
+  assert.deepEqual(env.calls.at(-1).options.body, { plans: [], confirm: 'scan_test' })
+  delete env.response
+  delete globalThis.window
+})
+
+function nodes(node) {
+  if (Array.isArray(node)) return node.flatMap(nodes)
+  if (!node || typeof node !== 'object') return []
+  if (typeof node.type === 'function') return nodes(node.type(node.props))
+  return [node, ...nodes(node.props?.children)]
+}
+
+test('start form uses plain choices and gates direct scan creation on checked consent', async () => {
+  for (const level of ['local-safe', 'active-authorized']) {
+    const options = { path: '/remote/repo', mode: 'standard', safetyLevel: level, scope: '', detectors: 'builtin-secrets', workers: '3', budget: '30', context: '', base: '', head: '' }
+    const before = env.calls.length
+    env.states = [options, null, false, false]
+    let view = nodes(plugin.NewScan({ open: true, onClose() {} }))
+    assert.ok(view.some((n) => n.type === 'input' && n.props.type === 'checkbox' && n.props.checked === false))
+    for (const label of ['Just read the code (safest)', 'Read the code and test bugs on this computer', 'Read the code and test my running app'])
+      assert.ok(view.some((n) => n.type === 'option' && n.props.children === label))
+    let start = view.find((n) => n.type === 'button' && n.props.children === 'Create scan')
+    assert.equal(start.props.disabled, true)
+    await start.props.onClick()
+    assert.equal(env.calls.length, before)
+    let created
+    env.states = [options, null, false, true]
+    env.response = { scanId: 'scan_created', status: 'awaiting_analysis' }
+    view = nodes(plugin.NewScan({ open: true, onClose() {}, onCreated: (id) => { created = id } }))
+    start = view.find((n) => n.type === 'button' && n.props.children === 'Create scan')
+    assert.equal(start.props.disabled, false)
+    await start.props.onClick()
+    assert.equal(created, 'scan_created')
+    assert.equal(env.calls.at(-1).path, '/scans')
+    assert.equal(env.calls.at(-1).options.body.safetyLevel, level)
+    assert.equal(env.calls.at(-1).options.body.confirm, level === 'local-safe' ? 'local-safe' : undefined)
+    delete env.response
+    delete env.states
+  }
+})
+
+test('app permission stop and local test buttons ask before sending requests', async () => {
+  env.fixtures['/scans/scan_test/grants'] = { items: [{ grantId: 'grt_test', scanId: 'scan_test', origins: ['http://localhost:8000'], used: 0, maxRequests: 2, expiresAt: '2099-01-01T00:00:00Z' }] }
+  globalThis.window = { confirm: () => false }
+  for (const level of ['local-safe', 'active-authorized']) {
+    env.states = [0, 'http://localhost:8000', '30', '2', '[]', null, false, null]
+    const view = nodes(plugin.ValidationControls({ id: 'scan_test', scan: { safetyLevel: level, status: 'awaiting_analysis' } }))
+    for (const button of view.filter((n) => n.type === 'button' && ['Test the bugs on this computer', 'Allow testing my running app', 'Stop allowing app testing'].includes(n.props.children))) {
+      const before = env.calls.length
+      await button.props.onClick()
+      assert.equal(env.calls.length, before)
+      window.confirm = () => true
+      env.response = button.props.children === 'Test the bugs on this computer'
+        ? { scanId: 'scan_test', receipts: [] }
+        : { scanId: 'scan_test', grantId: 'grt_test', revoked: button.props.children === 'Stop allowing app testing' }
+      await button.props.onClick()
+      assert.ok(env.calls.slice(before).some((call) => call.options?.body?.confirm === 'scan_test'))
+      window.confirm = () => false
+      delete env.response
+    }
+    delete env.states
+  }
+  delete env.fixtures['/scans/scan_test/grants']
+  delete globalThis.window
+})
+
+test('test results and app permission state use everyday language', () => {
+  env.fixtures['/scans/scan_test#validations'] = { items: [{ candidateId: 'cand_test', receiptId: 'vrc_test', status: 'passed', outputExcerpt: 'Observed output', cleanup: { done: true } }], total: 1 }
+  for (const [grant, expected] of [
+    [{ expiresAt: '2099-01-01T00:00:00Z', used: 0, maxRequests: 2 }, 'allowed'],
+    [{ expiresAt: '2000-01-01T00:00:00Z', used: 0, maxRequests: 2 }, 'not allowed'],
+    [{ expiresAt: '2099-01-01T00:00:00Z', used: 2, maxRequests: 2 }, 'not allowed'],
+    [{ expiresAt: '2099-01-01T00:00:00Z', used: 0, maxRequests: 2, revoked: true }, 'not allowed']
+  ]) {
+    env.fixtures['/scans/scan_test/grants'] = { items: [{ grantId: 'grt_test', origins: ['http://localhost:8000'], ...grant }] }
+    const output = render(plugin.ValidationControls({ id: 'scan_test', scan: { safetyLevel: 'active-authorized', status: 'awaiting_analysis' } }))
+    assert.ok(output.includes(`App testing: ${expected}`))
+    assert.match(output, /Test results.*Bug confirmed by test.*Observed output.*Cleanup: done/)
+    assert.doesNotMatch(output.replace(/https?:\/\/[^\s,)]+/g, ''), /\b(grant|receipt|validation|probe|authorize|HTTP)\b/i)
+  }
+  delete env.fixtures['/scans/scan_test#validations']
+  delete env.fixtures['/scans/scan_test/grants']
+})
+
 test('registers exactly one route, sidebar and palette entry, opt-in', () => {
   assert.equal(plugin.default.defaultEnabled, false)
   assert.equal(env.registrations.length, 3)

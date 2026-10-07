@@ -66,7 +66,8 @@ export function assertBackendPath(path) {
   const base = path.split('?')[0]
   if (
     !/^\/(summary|scans|findings|repositories)$/.test(base) &&
-    !/^\/scans\/[\w-]+(?:\/(cancel|resume|activity|coverage))?$/.test(base) &&
+    !/^\/scans\/[\w-]+(?:\/(cancel|resume|activity|coverage|grants|authorize-validation|run-validation))?$/.test(base) &&
+    !/^\/scans\/[\w-]+\/grants\/[\w-]+\/revoke$/.test(base) &&
     !/^\/findings\/[\w-]+(?:\/(triage|patch))?$/.test(base) &&
     !/^\/exports\/[\w-]+\/(md|sarif|json|csv)$/.test(base)
   )
@@ -106,6 +107,7 @@ export function normalizeResponse(value) {
     repo_key: 'repoKey',
     evidence_state: 'evidenceState',
     validation_level: 'validationLevel',
+    safety_level: 'safetyLevel',
     created_at: 'createdAt',
     started_at: 'startedAt',
     finished_at: 'finishedAt',
@@ -135,7 +137,7 @@ export async function request(path, options) {
 }
 export async function change(path, body, expected) {
   const [, resource, id] = path.split('/')
-  const identity = resource === 'scans' ? { scanId: id } : resource === 'findings' ? { findingId: id } : {}
+  const identity = resource === 'scans' && id ? { scanId: id } : resource === 'findings' && id ? { findingId: id } : {}
   const saved = readback(await request(path, { method: 'POST', body }), { ...identity, ...expected })
   await queryClient.invalidateQueries({ queryKey: [ID] })
   return saved
@@ -372,7 +374,7 @@ function FindingRow({ row, selected, onSelect }) {
     ]
   })
 }
-export function NewScan({ open, onClose }) {
+export function NewScan({ open, onClose, onCreated }) {
   const [options, setOptions] = useState({
     path: '',
     mode: 'standard',
@@ -387,11 +389,34 @@ export function NewScan({ open, onClose }) {
   })
   const [error, setError] = useState(null)
   const [busy, setBusy] = useState(false)
-  const set = (key) => (value) => setOptions((previous) => ({ ...previous, [key]: value }))
+  const [confirmed, setConfirmed] = useState(false)
+  const profile = useValue(host.state.profile)
+  const connectionId = useValue(host.state.connectionId)
+  const set = (key) => (value) => {
+    if (key === 'safetyLevel') setConfirmed(false)
+    setOptions((previous) => ({ ...previous, [key]: value }))
+  }
   const start = async () => {
+    if (options.safetyLevel !== 'static' && !confirmed) return
     setBusy(true)
     setError(null)
     try {
+      if (host.state.profile.get() !== profile || host.state.connectionId.get() !== connectionId)
+        throw new Error('Backend changed. Reopen this form.')
+      if (options.safetyLevel !== 'static') {
+        const created = await change('/scans', {
+          path: options.path, mode: options.mode, safetyLevel: options.safetyLevel,
+          scope: options.scope.split(',').map((s) => s.trim()).filter(Boolean),
+          detectors: options.detectors.split(',').map((s) => s.trim()).filter(Boolean),
+          notes: options.context, budget: { workers: Number(options.workers), minutes: Number(options.budget) },
+          ...(options.mode === 'diff' ? { base: options.base, ...(options.head ? { head: options.head } : {}) } : {}),
+          ...(options.safetyLevel === 'local-safe' ? { allowLocalValidation: true, confirm: 'local-safe' } : {})
+        })
+        if (!created.scanId) throw new Error('The scan was not returned. Refresh before trying again.')
+        onCreated?.(created.scanId)
+        onClose()
+        return
+      }
       await putDraft(
         scanDraft({
           ...options,
@@ -428,7 +453,7 @@ export function NewScan({ open, onClose }) {
             jsx(DialogTitle, { children: 'New security scan' }),
             jsx(DialogDescription, {
               children:
-                'The agent runs the scan; this page observes it. Enter a path on the backend host, not a path on this desktop. Start in chat prepares a draft for you to review and send.'
+                'Enter a folder on the computer running Hermes. Read-only scans start with a chat draft. Other choices create a scan here; use Open in chat to have the agent review the code before testing bugs.'
             })
           ]
         }),
@@ -454,14 +479,24 @@ export function NewScan({ open, onClose }) {
               onChange: set('scope')
             }),
             jsx(Field, {
-              name: 'Validation policy',
+              name: 'What can this scan do?',
               value: options.safetyLevel,
               onChange: set('safetyLevel'),
               choices: [
-                ['static', 'Static — read only'],
-                ['local-safe', 'Local-safe — disposable tests']
+                ['static', 'Just read the code (safest)'],
+                ['local-safe', 'Read the code and test bugs on this computer'],
+                ['active-authorized', 'Read the code and test my running app']
               ]
             }),
+            options.safetyLevel !== 'static' ? jsxs('div', { children: [
+              jsx(Paragraph, { value: options.safetyLevel === 'local-safe' ? LOCAL_WARNING : APP_WARNING }),
+              jsxs('label', { children: [
+                jsx('input', { type: 'checkbox', checked: confirmed, onChange: (e) => setConfirmed(e.target.checked) }),
+                options.safetyLevel === 'local-safe'
+                  ? 'I understand this will run commands from this code on my computer'
+                  : 'I understand this will send test requests to my running app'
+              ] })
+            ] }) : null,
             jsx(Field, {
               name: 'Worker limit',
               value: options.workers,
@@ -508,10 +543,11 @@ export function NewScan({ open, onClose }) {
               disabled:
                 busy ||
                 !options.path.trim() ||
+                (options.safetyLevel !== 'static' && !confirmed) ||
                 !(Number(options.workers) > 0) ||
                 !(Number(options.budget) > 0),
               onClick: start,
-              children: busy ? 'Preparing draft…' : 'Start in chat'
+              children: busy ? 'Preparing…' : options.safetyLevel === 'static' ? 'Start in chat' : 'Create scan'
             })
           ]
         })
@@ -699,6 +735,96 @@ export function Progress({ scan }) {
     ]
   })
 }
+const LOCAL_WARNING = 'Testing runs commands on the computer running Hermes, in a temporary copy of the code. This does not protect your other files from harmful code, and network access may still be possible. Only run code you trust. Creating a scan does not run these commands; you must allow each test separately.'
+const APP_WARNING = 'Testing sends requests to an app you already have running. Only test an app you own or have permission to test. Creating a scan does not allow requests yet; you choose the app address and limits below before allowing tests.'
+
+export async function confirmValidation(id, suffix, body, message) {
+  if (!window.confirm(message)) return null
+  const saved = readback(await request(`/scans/${id}/${suffix}`, {
+    method: 'POST', body: { ...body, confirm: id }, timeoutMs: 2100000
+  }), { scanId: id })
+  if (suffix === 'run-validation' ? !Array.isArray(saved.receipts) :
+      suffix === 'authorize-validation' ? !saved.grantId :
+      saved.grantId !== suffix.split('/')[1] || saved.revoked !== true)
+    throw new Error('The saved result could not be checked. Refresh before trying again.')
+  await queryClient.invalidateQueries({ queryKey: [ID] })
+  return saved
+}
+
+export function ValidationControls({ id, scan }) {
+  const grants = useData(`/scans/${id}/grants`)
+  const [offset, setOffset] = useState(0)
+  const results = useData(`/scans/${id}`, { section: 'validations', limit: PAGE_SIZE, offset })
+  const [origin, setOrigin] = useState('')
+  const [minutes, setMinutes] = useState('30')
+  const [maxRequests, setMaxRequests] = useState('20')
+  const [plans, setPlans] = useState('')
+  const [error, setError] = useState(null)
+  const [busy, setBusy] = useState(false)
+  const [saved, setSaved] = useState(null)
+  const profile = useValue(host.state.profile)
+  const connectionId = useValue(host.state.connectionId)
+  const level = scan.safetyLevel || scan.safety_level || 'static'
+  const mutable = !scan.sealedAt && !scan.sealed_at && ['created', 'running', 'awaiting_analysis'].includes(scan.status)
+  const allowed = mutable && items(grants.data).some((g) => !g.revoked && !g.revokedAt && Date.parse(g.expiresAt) > Date.now() && g.used < g.maxRequests)
+  const run = async (suffix, body, message) => {
+    if (busy) return
+    setError(null)
+    setBusy(true)
+    try {
+      if (host.state.profile.get() !== profile || host.state.connectionId.get() !== connectionId)
+        throw new Error('Backend changed. Refresh before making changes.')
+      const result = await confirmValidation(id, suffix, body(), message)
+      if (result) {
+        setSaved(result)
+        await grants.refetch()
+        await results.refetch()
+      }
+    } catch (e) {
+      setError(e)
+    } finally {
+      setBusy(false)
+    }
+  }
+  return jsxs(Section, { title: 'Test the bugs', children: [
+    jsx(Fault, { error: error || grants.error || results.error }),
+    level === 'static' ? jsx(Paragraph, { value: 'This scan only reads code. It does not run tests.' }) : null,
+    level === 'local-safe' ? jsxs('div', { children: [
+      jsx(Paragraph, { value: LOCAL_WARNING }),
+      jsx(Paragraph, { value: 'Ask the agent to prepare the test steps for this scan without running them or finishing the scan. Read the commands, then paste the list here. Each test needs a bug ID, two checks to compare, and cleanup steps.' }),
+      jsx(Field, { name: 'Test steps (paste from chat)', value: plans, onChange: setPlans, multiline: true }),
+      jsx(Btn, { disabled: busy || !mutable || !plans.trim(), onClick: () => run('run-validation', () => ({ plans: JSON.parse(plans) }),
+        'Only you can allow this: run small commands from this code on the computer running Hermes to check if the bugs are real?'), children: 'Test the bugs on this computer' })
+    ] }) : null,
+    level === 'active-authorized' ? jsxs('div', { children: [
+      jsx(Paragraph, { value: APP_WARNING }),
+      jsx(Paragraph, { value: `App testing: ${allowed ? 'allowed' : 'not allowed'}` }),
+      jsx(Field, { name: 'App address (such as http://localhost:8000, without a page path)', value: origin, onChange: setOrigin }),
+      jsx(Field, { name: 'Allow for this many minutes (1–240)', value: minutes, onChange: setMinutes, type: 'number', min: 1, max: 240 }),
+      jsx(Field, { name: 'Maximum test requests (1–200)', value: maxRequests, onChange: setMaxRequests, type: 'number', min: 1, max: 200 }),
+      jsx(Btn, { disabled: busy || !mutable || !origin.trim(), onClick: () => run('authorize-validation', () => ({ origin, minutes: Number(minutes), maxRequests: Number(maxRequests) }),
+        `Only you can allow this: let this scan send up to ${maxRequests} test requests to ${origin} for ${minutes} minutes?`), children: 'Allow testing my running app' }),
+      ...items(grants.data).map((g) => jsxs('div', { className: 'hs-section', children: [
+        jsx(Paragraph, { value: `${g.origins.join(', ')} · ${g.used} of ${g.maxRequests} requests used · ends ${g.expiresAt} · ${g.revoked || g.revokedAt ? 'stopped' : Date.parse(g.expiresAt) <= Date.now() ? 'ended' : g.used >= g.maxRequests ? 'request limit reached' : 'allowed'}` }),
+        jsx(Btn, { disabled: busy || !!g.revoked || !!g.revokedAt || !!scan.sealedAt || !!scan.sealed_at, onClick: () => run(`grants/${g.grantId}/revoke`, () => ({}),
+          'Stop allowing this scan to send more test requests to this app?'), children: 'Stop allowing app testing' }),
+        jsx(Paragraph, { value: `For the agent: use ${g.grantId} with this scan. Only the listed app and remaining requests are allowed.` })
+      ] }, g.grantId)),
+      jsx(Paragraph, { value: 'Use Open in chat to ask the agent to test this scan against the allowed app. The agent cannot give itself permission.' })
+    ] }) : null,
+    !mutable && level !== 'static' ? jsx(Paragraph, { value: 'This scan is not open for new tests. Resume it if paused, or create a new scan if it is finished.' }) : null,
+    saved ? jsx('p', { role: 'status', children: saved.receipts ? `${saved.receipts.length} test results saved.` : saved.revoked ? 'App testing permission stopped.' : 'App testing permission saved.' }) : null,
+    jsx('h3', { children: 'Test results' }),
+    ...items(results.data).map((r) => jsxs('div', { className: 'hs-section', children: [
+      jsx(Paragraph, { value: `${r.candidateId} · ${{ NOT_RUN: 'Not run', passed: 'Bug confirmed by test', failed: 'Test did not confirm the bug', inconclusive: 'Could not tell' }[r.status] || 'Unknown result'}` }),
+      jsx('pre', { children: r.outputExcerpt || 'No output recorded.' }),
+      jsx(Paragraph, { value: `Cleanup: ${r.cleanup?.done ? 'done' : 'not completed'}` })
+    ] }, r.receiptId)),
+    !items(results.data).length ? jsx(Paragraph, { value: 'No test results recorded yet.' }) : null,
+    jsx(Pager, { offset, setOffset, data: results.data })
+  ] })
+}
+
 export function ScanDetail({ id, onBack, onFinding }) {
   const q = useData(`/scans/${id}`)
   const coverage = useData(`/scans/${id}/coverage`)
@@ -730,7 +856,7 @@ export function ScanDetail({ id, onBack, onFinding }) {
       if (scan.sessionId) await host.openSession(scan.sessionId)
       else
         await putDraft(
-          `Load hermes-security:security-audit and inspect existing scan ${id}. Do not start a new scan or change files without asking.`
+          `Load hermes-security:security-audit and continue existing scan ${id}. Do not start a new scan or change files. Respect the scan's stored budget. Review the code and prepare tests if requested, but do not finish/seal this scan until the user has had a chance to test it. Never give yourself permission to run tests; local commands require a user click and app requests require an existing user permission.`
         )
     } catch (e) {
       setChatError(e)
@@ -809,6 +935,7 @@ export function ScanDetail({ id, onBack, onFinding }) {
                               children: jsx(Coverage, { data: coverage.data })
                             }),
                             active ? jsx(Progress, { scan }) : null,
+                            jsx(ValidationControls, { id, scan }, id),
                             jsxs(Section, {
                               title: 'Target and run',
                               children: [
@@ -819,7 +946,7 @@ export function ScanDetail({ id, onBack, onFinding }) {
                                   value: `Snapshot: ${scan.target?.snapshotDigest || 'Not recorded'}\nRevision: ${scan.target?.revision || 'Not recorded'}\nFiles in scope: ${scan.target?.fileCount ?? 'Not recorded'}\nScope: ${list(scan.target?.scope).join(', ') || 'Not recorded'}\nStarted: ${scan.startedAt || scan.createdAt || 'Not recorded'}\nFinished: ${scan.finishedAt || 'Not recorded'}`
                                 }),
                                 jsx(Paragraph, {
-                                  value: `Context: ${scan.options?.context || scan.context || 'None supplied'}`
+                                  value: `Context: ${scan.options?.context || scan.options?.notes || scan.context || 'None supplied'}`
                                 })
                               ]
                             }),
@@ -1399,7 +1526,7 @@ function ScopedSecurityPage({ profile }) {
             },
             `${profile}:${tab}`
           ),
-      jsx(NewScan, { open: newScan, onClose: () => setNewScan(false) })
+      jsx(NewScan, { open: newScan, onClose: () => setNewScan(false), onCreated: (id) => { setTab('Scans'); setSelected(id) } })
     ]
   })
 }

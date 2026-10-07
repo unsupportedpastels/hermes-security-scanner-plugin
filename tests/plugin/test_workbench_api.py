@@ -51,6 +51,7 @@ def populated(api, tmp_path):
     (root / 'app.py').write_text('def get_invoice(invoice_id):\n    return invoices.get(invoice_id)\nAWS_ACCESS_KEY_ID = "' + secret + '"\n')
     # Import a real acceptance helper by file path (tests need not be packages).
     spec = importlib.util.spec_from_file_location('security_acceptance_helpers', ROOT / 'tests/integration/test_end_to_end_static.py')
+    assert spec is not None and spec.loader is not None
     helpers = importlib.util.module_from_spec(spec); spec.loader.exec_module(helpers)
     service = module.get_service()
     plan = service.start_scan(path=str(root))
@@ -117,7 +118,7 @@ def test_scan_actions_policy_and_events(api, tmp_path, monkeypatch):
     root = tmp_path / 'repo'; root.mkdir(); (root / 'a.py').write_text('x = 1\n')
     response = client.post(PREFIX + '/scans', json={'path': str(root), 'safety_level': 'local-safe'})
     assert response.status_code == 403 and not events
-    response = client.post(PREFIX + '/scans', json={'path': str(root), 'safety_level': 'local-safe', 'allowLocalValidation': True})
+    response = client.post(PREFIX + '/scans', json={'path': str(root), 'safety_level': 'local-safe', 'allowLocalValidation': True, 'confirm': 'local-safe'})
     assert response.status_code == 200
     sid = response.json()['scanId']
     for action, status in [('cancel', 'canceled'), ('resume', 'awaiting_analysis')]:
@@ -169,7 +170,7 @@ def test_bad_query_is_sanitized_400(api, path):
     assert response.json() == {'error': {'code': 'invalid_input', 'message': 'Invalid request.'}}
 
 
-def test_error_mapping_and_no_authority_routes(populated, monkeypatch):
+def test_error_mapping_and_unexposed_internal_routes(populated, monkeypatch):
     module, client, root, sid, fid, secret = populated
     for path in ['/scans/missing', '/findings/missing', '/scans/missing/activity', '/scans/missing/coverage']:
         assert client.get(PREFIX + path).status_code == 404
@@ -183,7 +184,7 @@ def test_error_mapping_and_no_authority_routes(populated, monkeypatch):
         assert client.post(PREFIX + '/scans', json=body).status_code == 400
     assert client.post(PREFIX + '/scans', content='{broken', headers={'Content-Type': 'application/json'}).status_code == 400
     assert client.post(PREFIX + '/scans', content='x' * (module.MAX_JSON_BYTES + 1)).status_code == 400
-    for suffix in ['grants', 'mint_grant', 'record_validations', 'validations']:
+    for suffix in ['mint_grant', 'record_validations', 'validations']:
         assert client.post(PREFIX + '/scans/' + sid + '/' + suffix, json={}).status_code == 404
     def fail():
         raise RuntimeError('/private/file ' + secret)
@@ -266,6 +267,165 @@ print(module.health())
                             capture_output=True, text=True, timeout=30)
     assert result.returncode == 0, result.stderr
     assert "'plugin': 'hermes-security'" in result.stdout
+
+
+@pytest.mark.parametrize('confirm', [None, 'wrong', True])
+def test_dashboard_confirmation_required(api, tmp_path, confirm):
+    module, client = api
+    root = tmp_path / 'repo'; root.mkdir(); (root / 'app.py').write_text('x=1\n')
+    body = {'path': str(root), 'safetyLevel': 'local-safe', 'allowLocalValidation': True, 'confirm': confirm}
+    assert client.post(PREFIX + '/scans', json=body).status_code == 400
+    sid = module.get_service().start_scan(path=str(root), safety_level='active-authorized')['scanId']
+    for suffix in ['authorize-validation', 'run-validation', 'grants/missing/revoke']:
+        response = client.post(PREFIX + '/scans/' + sid + '/' + suffix, json={'confirm': confirm})
+        assert response.status_code == 400
+
+
+def test_dashboard_grant_lifecycle_and_level_boundaries(api, tmp_path):
+    module, client = api
+    root = tmp_path / 'repo'; root.mkdir(); (root / 'app.py').write_text('x=1\n')
+    ids = {}
+    for level in ['static', 'local-safe', 'active-authorized']:
+        body: dict = {'path': str(root), 'safetyLevel': level}
+        if level == 'local-safe':
+            body.update(allowLocalValidation=True, confirm='local-safe')
+        response = client.post(PREFIX + '/scans', json=body)
+        assert response.status_code == 200, response.text
+        ids[level] = response.json()['scanId']
+    for level, sid in ids.items():
+        url = PREFIX + '/scans/' + sid
+        response = client.post(url + '/authorize-validation', json={'confirm': sid, 'origin': 'http://127.0.0.1:8765', 'minutes': 30, 'maxRequests': 20})
+        if level != 'active-authorized':
+            assert response.status_code == 403
+        else:
+            assert response.status_code == 200, response.text
+            grant = response.json()
+            assert grant['createdBy'] == 'dashboard'
+            assert grant['actions'] == ['http-probe']
+            assert client.get(url + '/grants').json()['items'] == [grant]
+            wrong = PREFIX + '/scans/' + ids['static'] + '/grants/' + grant['grantId'] + '/revoke'
+            assert client.post(wrong, json={'confirm': ids['static']}).status_code == 400
+            revoke = url + '/grants/' + grant['grantId'] + '/revoke'
+            assert client.post(revoke, json={'confirm': sid}).json()['revoked'] is True
+            assert client.get(url + '/grants').json()['items'][0]['revoked'] is True
+        response = client.post(url + '/run-validation', json={'confirm': sid, 'plans': []})
+        assert response.status_code == (400 if level == 'local-safe' else 403)
+
+
+def test_dashboard_executes_real_local_controls_but_agent_cannot(api, tmp_path):
+    module, client = api
+    root = tmp_path / 'repo'; root.mkdir()
+    (root / 'app.py').write_text('def get_invoice(invoice_id):\n    return invoices.get(invoice_id)\n')
+    sid = client.post(PREFIX + '/scans', json={'path': str(root), 'safetyLevel': 'local-safe',
+        'allowLocalValidation': True, 'confirm': 'local-safe'}).json()['scanId']
+    service = module.get_service()
+    assert service.get_scan(sid)['options']['authorizationSource'] == 'dashboard'
+    spec = importlib.util.spec_from_file_location('local_helpers', ROOT / 'tests/integration/test_end_to_end_static.py')
+    assert spec is not None and spec.loader is not None
+    helpers = importlib.util.module_from_spec(spec); spec.loader.exec_module(helpers)
+    service.submit_worker_result(helpers.worker(service.get_scan(sid)['plan'], [helpers.candidate_for(root)]))
+    cid = service.get_scan(sid, 'candidates')['items'][0]['candidateId']
+    plan = {'candidateId': cid, 'kind': 'local-command', 'level': 'local-safe',
+            'commands': [[sys.executable, '-c', 'print("MARKER")'], [sys.executable, '-c', 'print("negative")']],
+            'positiveControl': {'commandIndex': 0, 'expectedMarker': 'MARKER'},
+            'negativeControl': {'commandIndex': 1, 'expectedMarker': 'MARKER'},
+            'cleanup': {'disposable': True}, 'timeoutS': 2}
+    tools = importlib.import_module('.tools', module._PACKAGE_NAME)
+    handler = tools.make_handler('security_scan_record_validations', lambda: service)
+    for extra in [{}, {'user_authorized': True}, {'authorization_source': 'dashboard'}]:
+        result = json.loads(handler({'scan_id': sid, 'plans': [plan], **extra}))
+        assert result['ok'] is False
+    assert service.store.validations(sid) == []
+    url = PREFIX + '/scans/' + sid + '/run-validation'
+    for body in [{}, {'confirm': 'wrong', 'plans': [plan]}]:
+        assert client.post(url, json=body).status_code == 400
+    response = client.post(url, json={'confirm': sid, 'plans': [plan]})
+    assert response.status_code == 200, response.text
+    receipt = response.json()['receipts'][0]
+    assert receipt['status'] == 'passed'
+    assert receipt['cleanup']['done'] is True
+    assert 'User authorization source: dashboard' in receipt['notes']
+    assert client.get(PREFIX + '/scans/' + sid, params={'section': 'validations'}).json()['items'] == [receipt]
+    assert service.get_scan(sid, 'candidates')['items'][0]['evidenceState'] == 'runtime_confirmed'
+    # A prior user click does not authorize a later agent local-command call.
+    assert json.loads(handler({'scan_id': sid, 'plans': [plan]}))['ok'] is False
+    service.finalize(sid)
+    assert client.post(url, json={'confirm': sid, 'plans': [plan]}).status_code == 409
+
+
+@pytest.mark.parametrize('extra', [
+    {'minutes': 0}, {'minutes': 241}, {'minutes': True}, {'maxRequests': 201},
+    {'maxRequests': False}, {'actions': ['local-command']}, {'created_by': 'dashboard'},
+    {'origin': 'http://localhost:8000/private'}, {'origin': 'http://user:pass@localhost:8000'},
+    {'origin': None},
+])
+def test_dashboard_grant_invalid_scope_is_safe(api, tmp_path, extra):
+    module, client = api
+    root = tmp_path / 'repo'; root.mkdir(); (root / 'app.py').write_text('x=1\n')
+    sid = module.get_service().start_scan(path=str(root), safety_level='active-authorized')['scanId']
+    response = client.post(PREFIX + '/scans/' + sid + '/authorize-validation', json={
+        'confirm': sid, 'origin': 'http://localhost:8000', **extra})
+    assert response.status_code == 400
+    assert '/private' not in response.text and 'user:pass' not in response.text
+    assert module.get_service().list_grants(sid) == {'items': []}
+
+
+def test_dashboard_start_cannot_accept_authority_fields(api, tmp_path):
+    _, client = api
+    root = tmp_path / 'repo'; root.mkdir(); (root / 'app.py').write_text('x=1\n')
+    for field in ['user_authorized', 'authorization_source']:
+        assert client.post(PREFIX + '/scans', json={'path': str(root), field: True}).status_code == 400
+    for body in [{'safetyLevel': 'local-safe', 'allowLocalValidation': True},
+                 {'safety_level': 'local-safe', 'allowLocalValidation': True},
+                 {'safetyLevel': 'static', 'safety_level': 'local-safe'}]:
+        assert client.post(PREFIX + '/scans', json={'path': str(root), **body}).status_code == 400
+
+
+def test_dashboard_http_grant_runs_bounded_agent_plan(api, tmp_path):
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    import threading
+    module, client = api
+    root = tmp_path / 'repo'; root.mkdir()
+    (root / 'app.py').write_text('def get_invoice(invoice_id):\n    return invoices.get(invoice_id)\n')
+    service = module.get_service()
+    plan = service.start_scan(path=str(root), safety_level='active-authorized')
+    sid = plan['scanId']
+    spec = importlib.util.spec_from_file_location('http_helpers', ROOT / 'tests/integration/test_end_to_end_static.py')
+    assert spec is not None and spec.loader is not None
+    helpers = importlib.util.module_from_spec(spec); spec.loader.exec_module(helpers)
+    service.submit_worker_result(helpers.worker(plan, [helpers.candidate_for(root)]))
+    cid = service.get_scan(sid, 'candidates')['items'][0]['candidateId']
+    requests = []
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            requests.append(self.path)
+            self.send_response(200); self.end_headers()
+            self.wfile.write(b'MARKER' if self.path == '/positive' else b'negative')
+        def log_message(self, *args):
+            pass
+    server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True); thread.start()
+    try:
+        origin = 'http://127.0.0.1:' + str(server.server_port)
+        url = PREFIX + '/scans/' + sid
+        grant = client.post(url + '/authorize-validation', json={
+            'confirm': sid, 'origin': origin, 'maxRequests': 2, 'minutes': 1}).json()
+        http_plan = {'candidateId': cid, 'grantId': grant['grantId'], 'level': 'active-authorized', 'kind': 'http-probe',
+            'requests': [{'method': 'GET', 'url': origin + '/positive'}, {'method': 'GET', 'url': origin + '/negative'}],
+            'positiveControl': {'requestIndex': 0, 'expectedMarker': 'MARKER'}, 'negativeControl': {'requestIndex': 1},
+            'cleanup': {'responses': 'close'}, 'timeoutS': 2}
+        tools = importlib.import_module('.tools', module._PACKAGE_NAME)
+        handler = tools.make_handler('security_scan_record_validations', lambda: service)
+        result = json.loads(handler({'scan_id': sid, 'plans': [http_plan]}))
+        assert result['ok'] is True and result['result']['receipts'][0]['status'] == 'passed'
+        assert requests == ['/positive', '/negative']
+        assert client.get(url + '/grants').json()['items'][0]['used'] == 2
+        assert json.loads(handler({'scan_id': sid, 'plans': [http_plan]}))['ok'] is False
+        assert client.post(url + '/grants/' + grant['grantId'] + '/revoke', json={'confirm': sid}).status_code == 200
+        assert json.loads(handler({'scan_id': sid, 'plans': [http_plan]}))['ok'] is False
+        assert len(requests) == 2
+    finally:
+        server.shutdown(); server.server_close(); thread.join(timeout=5)
 
 
 def test_manifest_contract():

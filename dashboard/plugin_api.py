@@ -1,4 +1,4 @@
-"""Host-mounted, profile-local workbench API. No validation authority over HTTP.
+"""Host-authenticated, profile-local workbench API with explicit user consent.
 
 Hermes imports this file standalone and supplies /api/plugins/hermes-security.
 Load only our sibling package by path; never depend on cwd or mutate sys.path.
@@ -119,10 +119,90 @@ def scans(q: str | None = None, status: str | None = None, mode: str | None = No
 @router.post('/scans')
 def start_scan(body: dict = Body(...)):
     service = get_service()
-    created = service.start_scan(**body)
+    opts = dict(body)
+    if 'safetyLevel' in opts:
+        if 'safety_level' in opts:
+            raise ValidationError('ambiguous safety level')
+        opts['safety_level'] = opts.pop('safetyLevel')
+    if {'user_authorized', 'authorization_source'} & opts.keys():
+        raise ValidationError('authority fields are not request options')
+    confirmed = opts.pop('confirm', None)
+    authorize = opts.get('safety_level') == 'local-safe' and opts.get('allowLocalValidation') is True
+    if authorize and confirmed != 'local-safe':
+        return _consent_error()
+    created = service.start_scan(**opts, user_authorized=authorize,
+                                 authorization_source='dashboard' if authorize else None)
     result = service.get_scan(created['scanId'])
     _broadcast('scan.updated', {'scanId': created['scanId']})
     return result
+
+
+def _consent_error():
+    return JSONResponse({'error': {'code': 'invalid_input', 'message': 'Please confirm this action for the selected scan.'}}, status_code=400)
+
+
+def _level_error(level):
+    return JSONResponse({'error': {'code': 'policy_denied', 'message': 'This action requires a scan created for ' + ('testing on this computer.' if level == 'local-safe' else 'testing a running app.')}}, status_code=403)
+
+
+@router.get('/scans/{scan_id}/grants')
+def grants(scan_id: str):
+    return get_service().list_grants(scan_id)
+
+
+@router.post('/scans/{scan_id}/authorize-validation')
+def authorize_validation(scan_id: str, body: dict = Body(...)):
+    if body.get('confirm') != scan_id:
+        return _consent_error()
+    service = get_service()
+    if service.get_scan(scan_id)['safety_level'] != 'active-authorized':
+        return _level_error('active-authorized')
+    if set(body) - {'confirm', 'origin', 'minutes', 'maxRequests'}:
+        raise ValidationError('unknown authorization option')
+    minutes, cap = body.get('minutes', 30), body.get('maxRequests', 20)
+    if type(minutes) is not int or not 1 <= minutes <= 240 or type(cap) is not int or not 1 <= cap <= 200:
+        raise ValidationError('invalid grant limits')
+    # Share CLI origin syntax: do not silently discard paths or credentials.
+    commands = importlib.import_module('.commands', _PACKAGE_NAME)
+    try:
+        origin = commands._origin(body.get('origin'))
+    except (ValueError, TypeError, AttributeError, commands.argparse.ArgumentTypeError):
+        raise ValidationError('invalid origin') from None
+    grant = service.mint_grant(scan_id, origins=[origin], actions=['http-probe'],
+                              expires_in_s=minutes * 60, max_requests=cap, created_by='dashboard')
+    _broadcast('scan.updated', {'scanId': scan_id})
+    return service.store.get_grant(grant['grantId'])
+
+
+@router.post('/scans/{scan_id}/grants/{grant_id}/revoke')
+def revoke_grant(scan_id: str, grant_id: str, body: dict = Body(...)):
+    if body.get('confirm') != scan_id:
+        return _consent_error()
+    if set(body) != {'confirm'}:
+        raise ValidationError('invalid revoke options')
+    service = get_service()
+    if service.store.get_grant(grant_id)['scanId'] != scan_id:
+        raise ValidationError('grant does not belong to this scan')
+    service.revoke_grant(grant_id)
+    _broadcast('scan.updated', {'scanId': scan_id})
+    return service.store.get_grant(grant_id)
+
+
+@router.post('/scans/{scan_id}/run-validation')
+def run_validation(scan_id: str, body: dict = Body(...)):
+    if body.get('confirm') != scan_id:
+        return _consent_error()
+    service = get_service()
+    if service.get_scan(scan_id)['safety_level'] != 'local-safe':
+        return _level_error('local-safe')
+    plans = body.get('plans')
+    if (set(body) != {'confirm', 'plans'} or not isinstance(plans, list) or not plans or
+            any(not isinstance(p, dict) or p.get('kind') != 'local-command' or p.get('level') != 'local-safe' for p in plans)):
+        raise ValidationError('requires local-command plans at local-safe level')
+    result = service.record_validations(scan_id, plans=plans, user_authorized=True, authorization_source='dashboard')
+    recorded = {r['receiptId']: r for r in service.store.validations(scan_id)}
+    _broadcast('scan.updated', {'scanId': scan_id})
+    return {'scanId': scan_id, 'receipts': [recorded[r['receiptId']] for r in result['receipts']]}
 
 
 @router.get('/scans/{scan_id}')

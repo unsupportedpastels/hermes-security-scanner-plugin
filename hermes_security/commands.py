@@ -15,7 +15,7 @@ HELP = """/security status
 /security help
 Grants are limited to 240 minutes and 200 requests.
 Grants apply only to scans started with safety_level active-authorized.
-Local-safe validation is CLI-only: start --allow-local --safety-level local-safe, then validate --scan <scanId> --file <plans.json> --allow-local"""
+Local-safe validation requires a confirmed Desktop click or CLI: start --allow-local --safety-level local-safe, then validate --scan <scanId> --file <plans.json> --allow-local"""
 
 
 class UsageError(ValidationError):
@@ -53,7 +53,7 @@ def bounded_int(maximum, minimum=1):
 
 
 def _actions(text):
-    # local-command is not grantable: local execution is CLI-only (validate --allow-local).
+    # local-command is not grantable: local execution requires a direct user call (Desktop or validate --allow-local).
     values = text.split(",")
     if not values or any(v != "http-probe" for v in values):
         raise argparse.ArgumentTypeError("Actions must be http-probe")
