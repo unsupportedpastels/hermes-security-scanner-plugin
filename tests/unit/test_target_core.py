@@ -7,6 +7,7 @@ import pytest
 from hermes_security.target import (resolve_target, build_inventory, snapshot_digest,
     diff_manifest, read_excerpt, verify_excerpt, is_snapshot_current, redact_secrets)
 from hermes_security.errors import TargetError
+from tests.support import make_link, outside_system_dir
 
 
 def git(root, *args):
@@ -55,6 +56,13 @@ def test_git_snapshot(repo, change):
     assert not is_snapshot_current(target, before)
 
 
+def test_plain_folder_scope_covers_the_folder(tmp_path):
+    from hermes_security.target.policy import matches_scope
+    assert matches_scope('tools/a.py', ['tools']) and matches_scope('tools/sub/b.py', ['tools/'])
+    assert not matches_scope('toolsmith/a.py', ['tools']) and not matches_scope('a/tools/x.py', ['tools'])
+    assert matches_scope('tools', ['tools']) and matches_scope('src/x.py', ['src/*.py'])
+
+
 def test_scope_and_exclusions(tmp_path):
     (tmp_path / 'a.py').write_text('ok\n')
     (tmp_path / 'b.txt').write_text('ok\n')
@@ -68,16 +76,25 @@ def test_scope_and_exclusions(tmp_path):
 
 def test_hostile_files(tmp_path):
     (tmp_path / 'a').write_text('a')
-    (tmp_path / 'inside').symlink_to(tmp_path / 'a')
-    (tmp_path / 'outside').symlink_to('/etc/passwd')
+    if sys.platform == 'win32':
+        # Unprivileged Windows: junctions are the link type; no FIFOs exist in the
+        # filesystem; NTFS names are UTF-16, so the invalid name is a lone surrogate.
+        (tmp_path / 'd').mkdir()
+        make_link(tmp_path / 'inside', tmp_path / 'd', directory=True)
+        make_link(tmp_path / 'outside', outside_system_dir(), directory=True)
+        fd = os.open(str(tmp_path) + '\\bad\ud800', os.O_CREAT | os.O_WRONLY, 0o600); os.close(fd)
+    else:
+        (tmp_path / 'inside').symlink_to(tmp_path / 'a')
+        (tmp_path / 'outside').symlink_to('/etc/passwd')
+        os.mkfifo(tmp_path / 'fifo')
+        fd = os.open(os.fsencode(tmp_path) + b'/bad\xff', os.O_CREAT | os.O_WRONLY, 0o600); os.close(fd)
     (tmp_path / 'big').write_bytes(b'x' * 100)
-    os.mkfifo(tmp_path / 'fifo')
-    fd = os.open(os.fsencode(tmp_path) + b'/bad\xff', os.O_CREAT | os.O_WRONLY, 0o600); os.close(fd)
     inv = build_inventory(resolve_target(str(tmp_path)), max_file_bytes=20)
     reasons = {e['path']: e['reason'] for e in inv['excluded']}
     assert reasons['inside'] == reasons['outside'] == 'symlink'
     assert reasons['big'] == 'too_large'
-    assert reasons['fifo'] == 'not_regular'
+    if sys.platform != 'win32':
+        assert reasons['fifo'] == 'not_regular'
     assert 'invalid_encoding' in reasons.values()
 
 
@@ -116,3 +133,17 @@ def test_redaction():
     assert text not in result and matches[0]['type'] == 'aws-access-key'
     partial = 'ghp_' + 'A' * 20
     assert partial not in redact_secrets(partial)[0]
+
+
+def test_redaction_skips_calls_but_not_literals():
+    code = '    api_key = _resolve_explicit_xai_api_key()\n'
+    assert redact_secrets(code) == (code, [])
+    literal = 'api_key = Zq8rT2vLm9XkPw4N\n'
+    assert 'Zq8rT2vLm9XkPw4N' not in redact_secrets(literal)[0]
+
+
+def test_redaction_skips_variable_names_but_not_literals():
+    for code in ['    "api_key": explicit_key,\n', 'token = self.session_token\n', 'secret = DEFAULT_SECRET_NAME\n']:
+        assert redact_secrets(code) == (code, [])
+    for literal in ['"api_key": "explicit_key_value"\n', 'token = Zq8rT2vLm9_XkPw4N\n', 'secret = abcdefghijkl_Mnop\n']:
+        assert redact_secrets(literal)[1], literal

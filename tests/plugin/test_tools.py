@@ -74,7 +74,6 @@ def test_result_cap_stays_valid_json():
     ("get", {"scan_id": "s", "limit": 2, "offset": 1}, "get_scan"),
     ("checkpoint", {"scan_id": "s", "coverage": []}, "checkpoint"),
     ("submit_worker_result", {"payload": {"scanId": "s"}}, "submit_worker_result"),
-    ("import_detector_results", {"scan_id": "s", "run": False}, "import_detector_results"),
     ("record_chains", {"scan_id": "s", "explanations": {}}, "record_chains"),
     ("finalize", {"scan_id": "s"}, "finalize"),
     ("cancel", {"scan_id": "s"}, "cancel"),

@@ -8,7 +8,7 @@ from hermes_security.errors import ValidationError
 from hermes_security.tools import encode_result, MAX_RESULT_CHARS
 
 
-def big_repo(tmp_path, count=300):
+def big_repo(tmp_path, count=700):
     root = tmp_path / 'repo'; root.mkdir()
     for i in range(count):
         sub = root / ('package_with_a_long_directory_name_%03d' % (i % 20)); sub.mkdir(exist_ok=True)
@@ -32,7 +32,7 @@ def test_summary_and_packets_sections_fit_under_tool_cap(tmp_path):
         assert summary[key] == plan[key]
     assert summary['mode'] == 'standard' and summary['safetyLevel'] == 'static'
     assert summary['packetCount'] == len(plan['packets']) == len(summary['packetIds'])
-    assert summary['inventory']['files'] == 300 and 'packets' in summary['sections']
+    assert summary['inventory']['files'] == 700 and 'packets' in summary['sections']
 
     seen = []
     offset = 0

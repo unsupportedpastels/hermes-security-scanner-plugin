@@ -25,17 +25,20 @@ def _schema(suffix, description, properties, required):
 
 
 TOOL_SCHEMAS = [
-    _schema("start", "Start a repository review and snapshot its inventory before analysis. Defaults to static; never execute target code or imply validation consent.", {
-        "path": _field("string", "Local target directory; never the home or filesystem root.", minLength=1),
-        "mode": _field("string", "Review mode; use deep only when requested.", enum=["standard", "deep", "diff"], default="standard"),
-        "safety_level": _field("string", "Safety policy; selecting a level does not grant authorization.", enum=["static", "local-safe", "active-authorized"], default="static"),
-        "scope": _field("array", "In-scope path globs.", items={"type": "string"}),
-        "base": _field("string", "Pinned diff base revision."),
-        "head": _field("string", "Pinned diff head revision."),
+    _schema("start", "Start a security scan of a local repository. Usually only path is needed: standard reviews the whole codebase, diff reviews recent changes (base picked automatically), deep does extra passes.", {
+        "path": _field("string", "Repository folder to scan; never the home or filesystem root.", minLength=1),
+        "mode": _field("string", "standard = full codebase, diff = recent changes, deep = more thorough full scan.", enum=["standard", "deep", "diff"], default="standard"),
+        "allow_tests": _field("boolean", "Set true only if the user asked to run tests/repros to confirm findings.", default=False),
+        "context": _field("string", "Optional extra context from the user (what the app does, areas to focus on).", maxLength=8000),
+        "scope": _field("array", "Optional: limit the scan to these folders or globs.", items={"type": "string"}),
+        "base": _field("string", "Advanced: diff base revision (default is automatic)."),
+        "head": _field("string", "Advanced: diff head revision."),
+        "safety_level": _field("string", "Advanced; prefer allow_tests.", enum=["static", "local-safe", "active-authorized"]),
+        "dependency_check": _field("boolean", "Advanced: false skips the dependency check, only if the user does not want package names and versions sent to OSV.", default=True),
     }, ["path"]),
     _schema("get", "Read scan state or one paginated section before continuing a review. Read every page; incomplete coverage is not a clean result.", {
         "scan_id": _SCAN,
-        "section": _field("string", "Section to read: summary (scan header: digest, methodology, submit instructions, packet IDs), packets, inventory, candidates, coverage, workers, detectors, validations, chains, activity, findings, manifest, or report. Use summary then packets when a start or get result is truncated."),
+        "section": _field("string", "Section to read: summary (scan header: digest, methodology, submit instructions, packet IDs), packets, inventory, candidates, coverage, workers, validations, chains, activity, findings, manifest, or report. Use summary then packets when a start or get result is truncated."),
         "limit": _field("integer", "Maximum records per page; reduce if the response is truncated.", minimum=1, maximum=500, default=50),
         "offset": _field("integer", "Zero-based page offset.", minimum=0, default=0),
     }, ["scan_id"]),
@@ -46,12 +49,7 @@ TOOL_SCHEMAS = [
     _schema("submit_worker_result", "Submit a worker result after reviewing its assigned snapshot. Citations must match that snapshot; never include literal secrets or invented evidence.", {
         "payload": _field("object", "Canonical worker result with scanId, attemptId, workerRole, snapshotDigest, methodologyVersion, candidates and coverage."),
     }, ["payload"]),
-    _schema("import_detector_results", "Import SARIF or run an approved static detector for a scan. Detector claims remain candidates; do not execute target application code.", {
-        "scan_id": _SCAN, "detector": _field("string", "Registered detector name."),
-        "sarif_path": _field("string", "Local SARIF file path to import."),
-        "run": _field("boolean", "Run the named detector instead of only importing output.", default=False),
-    }, ["scan_id"]),
-    _schema("record_validations", "Record validation receipts or evaluate plans after static analysis. This tool never grants consent; local execution or active probes require prior user authorization.", {
+    _schema("record_validations", "Confirm findings. Send receipts for static checks, or plans to run: kind local-command (needs a scan started with allow_tests) or http-probe (needs the user to allow the app's address). Each plan needs a positiveControl and negativeControl.", {
         "scan_id": _SCAN, "receipts": {**_OBJECTS, "description": "Validation receipts to record; the service checks their evidence."},
         "plans": {**_OBJECTS, "description": "Validation plans subject to the existing scan policy and grants."},
     }, ["scan_id"]),

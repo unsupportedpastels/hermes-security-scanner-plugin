@@ -9,7 +9,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 TOOLS = {
     "security_scan_start", "security_scan_get", "security_scan_checkpoint",
-    "security_scan_submit_worker_result", "security_scan_import_detector_results",
+    "security_scan_submit_worker_result",
     "security_scan_record_validations", "security_scan_record_chains",
     "security_scan_finalize", "security_scan_cancel", "security_scan_export",
 }

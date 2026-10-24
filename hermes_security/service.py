@@ -12,10 +12,11 @@ from pathlib import Path
 import json
 import os
 import shlex
+import sys
 import threading
 import uuid
 
-from . import target, detectors, validation, reports, chains
+from . import target, validation, reports, chains, dependencies
 from .canonical import canonical_json, sha256_hex, stable_id, utcnow
 from .domain.models import normalize_candidate, promote_to_finding
 from .domain.identities import finding_id
@@ -27,10 +28,11 @@ from .standards import ledger
 from .orchestration import METHODOLOGY_VERSION, standard, deep, diff, reducer
 from .orchestration.coverage import build_coverage
 from .orchestration.worker_protocol import check_candidate
+from .fsutil import is_link, set_private
 
 
 class SecurityService:
-    def __init__(self, data_dir: Path, *, profile='default', clock=None):
+    def __init__(self, data_dir: Path, *, profile='default', clock=None, dependency_checker=None):
         # Resolve trusted configuration once (e.g. a symlinked HERMES_HOME); artifact
         # access below this root still refuses symlinks with O_NOFOLLOW.
         self.data_dir = Path(data_dir).resolve()
@@ -40,6 +42,7 @@ class SecurityService:
         self.clock = clock or utcnow
         self.store = SecurityStore(self.data_dir, redactor=target.redact_secrets)
         self._local = threading.local()
+        self._check_dependencies = dependency_checker or dependencies.check_dependencies
 
     def _now(self):
         value = self.clock()
@@ -101,6 +104,49 @@ class SecurityService:
         if not target.is_snapshot_current(scan['target'], scan['snapshot_digest']):
             raise Conflict('snapshot changed; start a new scan')
 
+    PHASES = (('preparing', 'Preparing scan'), ('threat_model', 'Building threat model'),
+              ('reviewing', 'Reviewing code'), ('validating', 'Validating findings'),
+              ('attack_paths', 'Tracing attack paths'), ('finalizing', 'Finalizing scan'))
+
+    def progress(self, scan_id):
+        """Phase checklist for the UI, derived from what the scan has actually recorded."""
+        scan = self._scan(scan_id)
+        kinds = {e['kind'] for e in self.store.events(scan_id, limit=500)}
+        attempts = [a for a in self._attempts(scan_id) if a['status'] == 'accepted']
+        reached = 0
+        if 'scan.checkpoint' in kinds:
+            reached = 1
+        if any(a['role'] not in {'validator'} for a in attempts):
+            reached = 2
+        if any(a['role'] == 'validator' for a in attempts) or 'validations.recorded' in kinds:
+            reached = 3
+        if self.store.get_chains(scan_id):
+            reached = 4
+        if scan['status'] == 'finalizing':
+            reached = 5
+        finished = bool(scan['sealed_at']) or scan['status'] in {'completed', 'partial'}
+        stopped = scan['status'] in {'canceled', 'interrupted', 'failed'}
+        steps = []
+        for index, (key, title) in enumerate(self.PHASES):
+            if finished or index < reached:
+                state = 'done'
+            elif index == reached:
+                state = 'stopped' if stopped else 'active'
+            else:
+                state = 'pending'
+            steps.append({'key': key, 'label': title, 'state': state})
+        current = 'done' if finished else self.PHASES[reached][0]
+        return {'phase': current, 'label': 'Completed' if finished else ('Stopped' if stopped else self.PHASES[reached][1]), 'steps': steps}
+
+    def link_session(self, scan_id, session_id, stored_session_id=None):
+        """Remember which chat session is running a scan (Desktop "View activity")."""
+        for value in (session_id, stored_session_id):
+            if value is not None and (not isinstance(value, str) or not value or len(value) > 200):
+                raise ValidationError('session id must be text')
+        self._scan(scan_id)
+        self.store.set_scan_option(scan_id, 'session', {'sessionId': session_id, 'storedSessionId': stored_session_id or session_id})
+        return self.get_scan(scan_id)
+
     def _attempts(self, scan_id):
         # The v1 store has no public attempt-list method; keep the read here.
         with self.store._connection() as conn:
@@ -110,11 +156,22 @@ class SecurityService:
         inventory = self.store.inventory(scan['scan_id'])
         profiles = ledger.specialist_profiles_for(scan['options']['surfaces'])
         if scan['mode'] == 'deep':
-            return deep.build_packets(scan['scan_id'], inventory, profiles, scan['options']['deep_passes'])
-        if scan['mode'] == 'diff':
+            packets = deep.build_packets(scan['scan_id'], inventory, profiles, scan['options']['deep_passes'])
+        elif scan['mode'] == 'diff':
             packets, _ = diff.build_packets(scan['scan_id'], scan['target'], profiles, manifest=scan['options']['diff'])
-            return packets
-        return standard.build_packets(scan['scan_id'], inventory, profiles)
+        else:
+            packets = standard.build_packets(scan['scan_id'], inventory, profiles)
+            packets += standard.remainder_packets(scan['scan_id'], packets, scan['options'].get('remainders', {}), inventory)
+        receipt = scan['options'].get('dependencies')
+        if receipt and receipt.get('leads'):
+            for packet in packets:
+                # Whole-scope packets read the dependencies section; area packets get their own manifests' leads.
+                files = [f['path'] for f in inventory] if packet.get('filesFrom') == 'inventory' or packet['role'] == 'deep-pass' else packet.get('files', [])
+                leads, total = dependencies.leads_for(receipt, files, limit=0 if packet.get('filesFrom') == 'inventory' else 100)
+                if total:
+                    packet['dependencyLeads'] = {'total': total, 'items': leads,
+                                                 'more': 'security_scan_get section dependencies' if total > len(leads) else None}
+        return packets
 
     def _plan(self, scan, packets=None):
         refs = Path(__file__).resolve().parents[1] / 'references'
@@ -127,26 +184,44 @@ class SecurityService:
                 'lanes': standard.lanes(), 'applicableControls': ledger.applicable_controls(scan['options']['surfaces']),
                 'packets': self._packets(scan) if packets is None else packets,
                 'workerBriefPath': str(refs / 'worker-packet.md'),
-                'submit': {'tool': 'security_scan_submit_worker_result', 'cli': 'PYTHONPATH=' + shlex.quote(str(Path(__file__).resolve().parents[1])) + ' python3 -m hermes_security submit --scan ' + scan['scan_id'] + ' --file <json>'},
+                'schedule': standard.SCHEDULE,
+                'dependencyCheck': dependencies.compact(scan['options'].get('dependencies')),
+                'submit': {'tool': 'security_scan_submit_worker_result', 'cli': 'PYTHONPATH=' + shlex.quote(str(Path(__file__).resolve().parents[1])) + ' ' + shlex.quote(sys.executable) + ' -m hermes_security submit --scan ' + scan['scan_id'] + ' --file <json>'},
                 'inventory': {'files': len(inventory), 'bytes': sum(f['size'] for f in inventory), 'lines': sum(f['lines'] for f in inventory), 'truncated': scan['options']['truncated']},
-                'excluded': {'total': len(excluded), 'items': excluded}, 'status': scan['status'], 'diff': scan['options'].get('diff')}
+                'excluded': self._excluded_summary(excluded), 'status': scan['status'], 'diff': scan['options'].get('diff')}
+
+    @staticmethod
+    def _excluded_summary(excluded, limit=500):
+        """Counts by reason; out-of-scope files are only counted, since a scoped scan excludes most of the tree."""
+        reasons = {}
+        for item in excluded:
+            reasons[item['reason']] = reasons.get(item['reason'], 0) + 1
+        listed = [item for item in excluded if item['reason'] != 'out_of_scope']
+        return {'total': len(excluded), 'byReason': reasons, 'items': listed[:limit], 'itemsTruncated': len(listed) > limit}
 
     def start_scan(self, *, user_authorized=False, authorization_source=None, **opts):
         self._safe(opts)
-        allowed = {'path', 'mode', 'scope', 'base', 'head', 'safety_level', 'allowLocalValidation', 'deep_passes',
-                   'budget', 'notes', 'detectors', 'detectorOptions', 'semgrep_config', 'provider', 'model'}
+        allowed = {'path', 'mode', 'scope', 'base', 'head', 'safety_level', 'allowLocalValidation', 'allow_tests',
+                   'deep_passes', 'budget', 'notes', 'context', 'provider', 'model', 'dependency_check'}
         if set(opts) - allowed:
             raise ValidationError('unknown scan option')
         if not isinstance(opts.get('path'), str):
             raise ValidationError('path is required')
+        if 'context' in opts:  # friendlier name for the optional context box
+            if opts.get('notes') is not None:
+                raise ValidationError('use context or notes, not both')
+            opts['notes'] = opts.pop('context')
         mode = opts.get('mode', 'standard')
         if not isinstance(mode, str) or mode not in {'standard', 'deep', 'diff'}:
             raise ValidationError('mode must be standard, deep or diff; use record_validations for validation')
-        safety = opts.get('safety_level', 'static')
+        if 'allow_tests' in opts and type(opts['allow_tests']) is not bool:
+            raise ValidationError('allow_tests must be true or false')
+        if 'dependency_check' in opts and type(opts['dependency_check']) is not bool:
+            raise ValidationError('dependency_check must be true or false')
+        # One switch replaces the old safety levels: tests run only when allowed.
+        safety = opts.get('safety_level', 'local-safe' if opts.get('allow_tests') or opts.get('allowLocalValidation') is True else 'static')
         if not isinstance(safety, str) or safety not in {'static', 'local-safe', 'active-authorized'}:
             raise ValidationError('invalid safety_level')
-        if safety == 'local-safe' and opts.get('allowLocalValidation') is not True:
-            raise PolicyDenied('local-safe requires explicit user allowLocalValidation')
         if mode != 'diff' and (opts.get('base') is not None or opts.get('head') is not None):
             raise ValidationError('base and head require diff mode')
         for key in ('provider', 'model', 'notes'):
@@ -169,11 +244,38 @@ class SecurityService:
                    'excluded': inventory['excluded'], 'truncated': inventory['truncated']}
         if mode == 'diff':
             options['diff'] = target.diff_manifest(resolved)
-        self._detector_options(options)
         scan = self.store.create_scan(mode=mode, safety_level=safety, target=resolved, inventory=inventory['files'], options=options)
+        # Dependencies are checked before review so their advisories reach the reviewers as leads.
+        receipt = self._check_dependencies(
+            root=resolved['root'], inventory=inventory['files'], data_dir=self.data_dir,
+            work_dir=self._work(scan['scan_id']) / 'dependencies', enabled=opts.get('dependency_check', True),
+            read=lambda path, max_bytes=512_000: self._read_text(resolved['root'], path, max_bytes=max_bytes))
+        scan = self.store.set_scan_option(scan['scan_id'], 'dependencies', receipt)
+        self.store.add_event(scan['scan_id'], 'dependencies.checked', dependencies.describe(receipt), dependencies.compact(receipt))
         scan = self.store.set_scan_status(scan['scan_id'], 'awaiting_analysis')
         self.store.add_event(scan['scan_id'], 'scan.started', 'Snapshot inventoried; review packets ready.', {'packetCount': len(self._packets(scan))})
         return self._plan(scan)
+
+    @staticmethod
+    def _read_text(root, path, max_bytes=512_000):
+        from .target.inventory import safe_read
+        try:
+            data, _ = safe_read(root, path, max_bytes=max_bytes)
+        except Exception:  # optional runtime-version files; any refusal just skips the file
+            return None
+        return data.decode('utf-8', 'replace')
+
+    def _queue(self, scan):
+        """Packet dispatch state for the rolling worker pool."""
+        attempts = self._attempts(scan['scan_id'])
+        done = {a['packet_id'] for a in attempts if a['status'] == 'accepted'}
+        items = []
+        for packet in sorted(self._packets(scan), key=lambda p: (p.get('priority', 0), p['packetId'])):
+            items.append({'packetId': packet['packetId'], 'role': packet['role'], 'review': packet.get('review'),
+                          'area': packet.get('area'), 'fileCount': packet.get('fileCount', len(packet.get('files', []))),
+                          'lineCount': packet.get('lineCount'), 'state': 'done' if packet['packetId'] in done else 'pending'})
+        pending = [i for i in items if i['state'] == 'pending']
+        return {'schedule': standard.SCHEDULE, 'pending': len(pending), 'done': len(items) - len(pending), 'items': items}
 
     def get_scan(self, scan_id, section=None, limit=50, offset=0):
         scan = self._scan(scan_id)
@@ -181,7 +283,7 @@ class SecurityService:
         if section is not None and not isinstance(section, str):
             raise ValidationError('section must be text')
         if section is None:
-            return {**scan, 'scanId': scan_id, 'plan': self._plan(scan)}
+            return {**scan, 'scanId': scan_id, 'plan': self._plan(scan), 'progress': self.progress(scan_id)}
         if section == 'summary':
             # Small header an agent can always read, even when the full plan exceeds the tool result cap.
             plan = self._plan(scan, packets=[])
@@ -191,8 +293,18 @@ class SecurityService:
             return {**{k: plan[k] for k in keep}, 'mode': scan['mode'], 'safetyLevel': scan['safety_level'],
                     'packetCount': len(packets), 'packetIds': [p['packetId'] for p in packets],
                     'laneCount': len(plan['lanes']), 'excludedTotal': plan['excluded']['total'],
-                    'sections': ['summary', 'packets', 'inventory', 'coverage', 'candidates', 'findings', 'workers',
-                                 'detectors', 'validations', 'chains', 'activity', 'manifest', 'report']}
+                    'schedule': standard.SCHEDULE, 'dependencyCheck': plan['dependencyCheck'],
+                    'possibleDuplicates': self._possible_duplicates(scan_id),
+                    'sections': ['summary', 'queue', 'packets', 'dependencies', 'inventory', 'coverage', 'candidates',
+                                 'findings', 'workers', 'validations', 'chains', 'activity', 'manifest', 'report']}
+        if section == 'queue':
+            queue = self._queue(scan)
+            return {**queue, 'items': queue['items'][offset:offset + limit], 'total': len(queue['items'])}
+        if section == 'dependencies':
+            receipt = scan['options'].get('dependencies') or {}
+            leads = receipt.get('leads', [])
+            return {'check': dependencies.compact(receipt), 'items': leads[offset:offset + limit], 'total': len(leads),
+                    'runtimes': receipt.get('runtimes', [])}
         if section == 'coverage':
             return self.coverage(scan_id)
         if section == 'activity':
@@ -214,8 +326,6 @@ class SecurityService:
             rows = self._candidates(scan_id)
         elif section == 'workers':
             rows = self._attempts(scan_id)
-        elif section == 'detectors':
-            rows = self.store.detector_runs(scan_id)
         elif section == 'validations':
             rows = self.store.validations(scan_id)
         else:
@@ -281,6 +391,11 @@ class SecurityService:
             for index, raw in enumerate(payload['candidates']):
                 try:
                     candidate = check_candidate(raw, scan=scan, inventory=inventory, attempt_id=aid)
+                    if candidate['evidenceState'] in {'source_supported', 'runtime_confirmed'}:
+                        # Finalize would demote it to inconclusive; refuse now while the worker can still fix it.
+                        problems = reports.validate_finding_sections(candidate)
+                        if problems:
+                            raise ValidationError('reportable candidate has incomplete sections: ' + '; '.join(problems))
                     candidate['diffAttribution'] = diff.attribution(candidate, scan['options']['diff']) if scan['mode'] == 'diff' else None
                     self._safe(candidate)
                     accepted.append(candidate)
@@ -300,81 +415,37 @@ class SecurityService:
                     state = candidate['evidenceState']
                     if state in {'source_supported', 'rejected', 'inconclusive'}:
                         self.store.set_candidate_state(scan_id, candidate['candidateId'], state, reason='Validator source review; runtime NOT RUN.')
-            self.store.record_coverage(scan_id, units, source=aid)
+            # Workers only add coverage: a later worker's deferral never undoes another's full review.
+            self.store.record_coverage(scan_id, units, source=aid, monotonic=True)
+            if packet is not None and packets[packet].get('review') in {'area', 'remainder'}:
+                self._record_remainder(scan, packets[packet], units)
             self.store.finish_attempt(scan_id, aid, 'accepted', result_digest=digest)
             self.store.add_event(scan_id, 'worker.accepted', 'Worker result recorded.', {'attemptId': aid, **counts, 'rejected': rejected, 'negativeResults': payload['negativeResults'], 'notes': payload['notes']})
             return {'scanId': scan_id, 'attemptId': aid, **counts, 'rejected': rejected}
 
-    def _detector_options(self, options):
-        config = deepcopy(options.get('detectorOptions', {}))
-        if not isinstance(config, dict) or set(config) - {'semgrep'}:
-            raise ValidationError('only explicit semgrep detector configuration is supported')
-        if 'semgrep_config' in options:
-            config['semgrep'] = {'config': options['semgrep_config']}
-        if 'semgrep' in config:
-            if not isinstance(config['semgrep'], dict) or set(config['semgrep']) - {'config'} or not isinstance(config['semgrep'].get('config'), str):
-                raise ValidationError('semgrep requires an explicit rules config path')
-            rules = Path(config['semgrep']['config']).expanduser()
-            if not rules.is_file() or rules.is_symlink():
-                raise ValidationError('semgrep config must be an existing local rules file, not a registry or URL')
-            config['semgrep']['config'] = str(rules.resolve())
-        return config
-
-    def _ingest_detectors(self, scan, candidates, receipts):
-        scan_id = scan['scan_id']
-        aid = stable_id('att', scan_id, 'detectors', receipts)
-        old = self.store.record_attempt(scan_id, aid, 'detector')
-        if old['status'] == 'accepted':
-            return {'scanId': scan_id, 'inserted': 0, 'duplicates': len(candidates), 'receipts': receipts}
-        normalized = []
-        for candidate in candidates:
-            row = normalize_candidate(candidate, scan_id=scan_id)
-            row['source'] = 'detector'
-            row['evidenceState'] = 'candidate'
-            if scan['mode'] == 'diff':
-                row['diffAttribution'] = diff.attribution(row, scan['options']['diff'])
-            self._safe(row)
-            normalized.append(row)
-        result = self.store.upsert_candidates(scan_id, aid, normalized)
-        for receipt in receipts:
-            self.store.record_detector_run(scan_id, receipt)
-            state = {'ok': 'reviewed', 'unavailable': 'unsupported'}.get(receipt['status'], 'failed')
-            self.store.record_coverage(scan_id, [{'unitId': 'detector:' + receipt['detector'], 'state': state, 'reason': receipt.get('error') or receipt['status'], 'evidence': [receipt['receiptId']]}], source=receipt['receiptId'])
-        self.store.finish_attempt(scan_id, aid, 'accepted', result_digest=sha256_hex(canonical_json(receipts)))
-        self.store.add_event(scan_id, 'detectors.recorded', 'Detector receipts recorded.', {'receiptIds': [r['receiptId'] for r in receipts]})
-        return {'scanId': scan_id, **result, 'receipts': receipts}
+    def _record_remainder(self, scan, packet, units):
+        """Queue the files an area worker left unfinished for a fresh worker."""
+        done = {'reviewed', 'not_applicable'}
+        covered = {u['unitId'] for u in self.store.coverage_units(scan['scan_id']) if u['state'] in done}
+        covered.update(u['unitId'] for u in units if u['state'] in done)
+        left = sorted(p for p in packet.get('files', []) if 'file:' + p not in covered)
+        remainders = dict(self._scan(scan['scan_id'])['options'].get('remainders', {}))
+        # A later attempt on the same packet can finish what an earlier one deferred; an empty
+        # list retires the queued remainder instead of leaving it pending.
+        if left or packet['packetId'] in remainders:
+            remainders[packet['packetId']] = left
+            self.store.set_scan_option(scan['scan_id'], 'remainders', remainders)
+        if left:
+            self.store.add_event(scan['scan_id'], 'packet.remainder', f'{len(left)} unfinished files queued for a fresh worker.',
+                                 {'parentPacketId': packet['packetId'], 'files': len(left)})
 
     def _work(self, scan_id):
         path = scan_dir(self.data_dir, scan_id) / 'work'
-        if path.is_symlink():
+        if is_link(path):
             raise ValidationError('work directory cannot be a symlink')
         path.mkdir(mode=0o700, exist_ok=True)
-        os.chmod(path, 0o700)
+        set_private(path, 0o700)
         return path
-
-    def run_detectors(self, scan_id, names=None):
-        with self._mutation(scan_id) as scan:
-            self._current(scan)
-            names = names if names is not None else scan['options'].get('detectors', ['builtin-secrets'])
-            if not isinstance(names, list) or len(names) > 20 or any(not isinstance(n, str) for n in names):
-                raise ValidationError('detector names must be a bounded string list')
-            self._safe(names)
-            resolved = {**scan['target'], 'detectorOptions': self._detector_options(scan['options'])}
-            candidates, receipts = detectors.run_detectors(list(dict.fromkeys(names)), resolved, {'files': self.store.inventory(scan_id)}, self._work(scan_id))
-            self._current(scan)
-            return self._ingest_detectors(scan, candidates, receipts)
-
-    def import_detector_results(self, scan_id, detector=None, sarif_path=None, run=False):
-        if run:
-            if sarif_path is not None:
-                raise ValidationError('choose detector execution or SARIF import')
-            return self.run_detectors(scan_id, [detector] if detector else None)
-        if not isinstance(sarif_path, (str, Path)):
-            raise ValidationError('sarif_path is required')
-        with self._mutation(scan_id) as scan:
-            self._current(scan)
-            candidates, receipt = detectors.import_sarif(sarif_path, target=scan['target'], inventory={'files': self.store.inventory(scan_id)}, detector_name=detector or 'sarif')
-            return self._ingest_detectors(scan, candidates, [receipt])
 
     def _candidates(self, scan_id):
         rows = self.store.list_candidates(scan_id)
@@ -419,7 +490,8 @@ class SecurityService:
                 if cid not in candidates:
                     raise NotFound('candidate not found in scan')
                 candidate = candidates[cid]
-                level = item.get('level', 'static')
+                inferred = {'local-command': 'local-safe', 'http-probe': 'active-authorized'}.get(item.get('kind'), 'static')
+                level = item.get('level', inferred if plans is not None else 'static')
                 if plans is None:
                     problems = validate_document('validation-receipt', item)
                     if problems:
@@ -432,30 +504,25 @@ class SecurityService:
                             raise PolicyDenied('runtime receipts must come from service-executed plans')
                     receipt = item
                 else:
-                    plan = {**item, 'scanId': scan_id}
+                    plan = {**item, 'scanId': scan_id, 'level': level}
                     grant = None
-                    if level == 'local-safe' and (scan['safety_level'] != 'local-safe' or user_authorized is not True):
-                        raise PolicyDenied('local-safe execution requires scan opt-in and a direct user-authorized call')
-                    # Local commands require a direct user call; grants never authorize agents.
+                    # The scan's "Run tests to confirm findings" switch is the consent for
+                    # local tests; the agent writes and runs them itself.
+                    if level == 'local-safe' and scan['safety_level'] == 'static':
+                        raise PolicyDenied('this scan was started without permission to run tests; start a new scan with tests allowed')
                     if item.get('kind') == 'local-command' and level != 'local-safe':
-                        raise PolicyDenied('local commands require a local-safe scan and explicit user authorization')
+                        raise PolicyDenied('local commands use level local-safe')
                     if level == 'active-authorized':
-                        if scan['safety_level'] != 'active-authorized':
-                            raise PolicyDenied('active-authorized execution requires an active-authorized scan')
                         if not isinstance(item.get('grantId'), str):
-                            raise PolicyDenied('active-authorized execution requires a grant')
+                            raise PolicyDenied('testing a running app requires the user to allow its address first')
                         try:
                             grant = self.store.get_grant(item['grantId'])
                         except NotFound as exc:
-                            raise PolicyDenied('active-authorized execution requires a valid grant') from exc
-                    safety = 'static' if level == 'static' else ('active-authorized' if grant else scan['safety_level'])
-                    validation.check_plan(plan, grant=grant, safety_level=safety, now=self._now())
+                            raise PolicyDenied('testing a running app requires a valid permission from the user') from exc
+                    validation.check_plan(plan, grant=grant, safety_level=level, now=self._now())
                     if level == 'static':
                         receipt = validation.static_receipt(candidate, checks=plan.get('checks', {}))
                     else:
-                        # Enforce a bounded lease horizon; the runner has per-operation timeouts.
-                        if type(plan.get('timeoutS', 10)) not in (int, float) or not 0 < plan.get('timeoutS', 10) <= 10:
-                            raise PolicyDenied('runtime timeoutS must be at most 10 seconds per operation')
                         if len(plan.get('requests', [])) + len(plan.get('commands', [])) > 200:
                             raise PolicyDenied('runtime operation budget exceeded')
                         if plan['kind'] == 'http-probe':
@@ -478,10 +545,24 @@ class SecurityService:
             return {'scanId': scan_id, 'receipts': recorded}
 
     def _reduced(self, scan_id):
-        result = reducer.reduce_candidates(self._candidates(scan_id))
+        # A validator's state is copied onto the discovery rows, so the reducer breaks the tie
+        # by order: discovery rows first, then validator rows in the order they finished.
+        attempts = {a['attempt_id']: a for a in self._attempts(scan_id)}
+        def order(row):
+            aid = (row.get('provenance', {}).get('workerAttemptIds') or [''])[0]
+            a = attempts.get(aid, {})
+            return (a.get('role') == 'validator', a.get('finished_at') or '', aid)
+        result = reducer.reduce_candidates(sorted(self._candidates(scan_id), key=order))
         if result['problems']:
             raise Conflict('candidate conservation check failed')
         return result
+
+    def _possible_duplicates(self, scan_id):
+        """Candidate pairs a validator should check for one root cause before finalize."""
+        try:
+            return reducer.possible_duplicates(self._reduced(scan_id)['retained'])
+        except Conflict:  # a broken conservation check is reported by finalize, not by the summary
+            return []
 
     def _chain_inputs(self, scan, candidates):
         result = []
@@ -509,7 +590,7 @@ class SecurityService:
         scan = self._scan(scan_id)
         if scan['sealed_at']:
             return json.loads(read_artifact(scan_dir(self.data_dir, scan_id), 'coverage.json'))
-        return build_coverage(scan, self.store.inventory(scan_id), self.store.coverage_units(scan_id), self._attempts(scan_id), self.store.detector_runs(scan_id), self._packets(scan), self._candidates(scan_id))
+        return build_coverage(scan, self.store.inventory(scan_id), self.store.coverage_units(scan_id), self._attempts(scan_id), self._packets(scan), self._candidates(scan_id))
 
     def finalize(self, scan_id):
         with self._mutation(scan_id) as scan:
@@ -532,6 +613,10 @@ class SecurityService:
                 row.get('provenance', {}).pop('subsumes', None)
                 retained.append(row)
             coverage = self.coverage(scan_id)
+            receipt = scan['options'].get('dependencies')
+            if receipt and receipt.get('status') == 'not_run':
+                # Requested but unavailable: known-vulnerable dependencies were not checked.
+                gaps.append(dependencies.describe(receipt))
             if not target.is_snapshot_current(scan['target'], scan['snapshot_digest']):
                 gaps.append('Target changed after this recorded snapshot; evidence describes the original snapshot only.')
             if gaps:
@@ -547,6 +632,9 @@ class SecurityService:
                         'mode': scan['mode'], 'safetyLevel': scan['safety_level'], 'status': 'completed' if coverage['completeness'] == 'complete' else 'partial',
                         'target': scan['target'], 'runtime': {'provider': scan['options'].get('provider'), 'model': scan['options'].get('model'), 'profile': self.profile, 'fallbacks': []},
                         'startedAt': scan['created_at'], 'finishedAt': self._now(), 'counts': {}, 'artifacts': {}, 'supersedes': None}
+            if receipt:
+                manifest['dependencyCheck'] = {**dependencies.compact(receipt),
+                                               'leads': receipt.get('leads', [])[:dependencies.REPORT_LEADS]}
             findings_doc = {'documentType': 'hermes-security.findings', 'schemaVersion': '1.0', 'scanId': scan_id, 'findings': findings, 'retained': retained}
             bundle = reports.finalize_bundle(manifest=manifest, findings_doc=findings_doc, coverage=coverage, chains_doc=chains_doc)
             directory = scan_dir(self.data_dir, scan_id)
@@ -563,7 +651,8 @@ class SecurityService:
             self.store.set_scan_status(scan_id, manifest['status'])
             self.store.seal(scan_id, manifest['seal']['digest'], str(directory))
             self.store.add_event(scan_id, 'scan.finalized', 'Verified bundle sealed.', {'status': manifest['status']})
-            return {'scanId': scan_id, 'status': manifest['status'], 'manifest': manifest, 'artifactDir': str(directory), 'verified': verified}
+            return {'scanId': scan_id, 'status': manifest['status'], 'manifest': manifest, 'artifactDir': str(directory), 'verified': verified,
+                    'possibleDuplicates': reducer.possible_duplicates(findings)}
 
     def cancel(self, scan_id):
         with self._mutation(scan_id, canceled=True):
@@ -619,7 +708,11 @@ class SecurityService:
             statuses = {r[0]: r[1] for r in conn.execute('SELECT status,count(*) FROM scans GROUP BY status')}
             count = conn.execute('SELECT count(DISTINCT finding_id) FROM findings').fetchone()[0]
             repositories = conn.execute('SELECT count(*) FROM repositories').fetchone()[0]
-        return {'scans': sum(statuses.values()), 'statuses': statuses, 'findings': count, 'repositories': repositories, 'profile': self.profile}
+            open_by_severity = {r[0]: r[1] for r in conn.execute(
+                "SELECT f.severity,count(DISTINCT f.finding_id) FROM findings f LEFT JOIN triage t ON t.finding_id=f.finding_id "
+                "WHERE COALESCE(t.state,'open')='open' GROUP BY f.severity")}
+        return {'scans': sum(statuses.values()), 'statuses': statuses, 'findings': count, 'repositories': repositories,
+                'open': open_by_severity, 'profile': self.profile}
 
     def _filters(self, filters, allowed):
         if set(filters) - set(allowed):
@@ -665,17 +758,16 @@ class SecurityService:
         return {'items': items, 'total': total}
 
     def workbench_findings(self, *, q=None, triage=None, severity=None, evidence_state=None,
-                           validation_level=None, repo_key=None, owasp=None, source=None,
+                           validation_level=None, repo_key=None, owasp=None,
                            chained=None, limit=50, offset=0):
         """Filter all workbench fields before LIMIT; never select evidence blobs.
 
-        The v1 store lacks validation-level/source filters. Keep this additive
-        query here rather than exposing database access to HTTP handlers.
-        Source accepts worker/detector provenance or an exact detector name.
+        The store lacks a validation-level filter. Keep this additive query
+        here rather than exposing database access to HTTP handlers.
         """
         filters = dict(q=q, triage=triage, severity=severity, evidence_state=evidence_state,
                        validation_level=validation_level, repo_key=repo_key, owasp=owasp,
-                       source=source, chained=chained, limit=limit, offset=offset)
+                       chained=chained, limit=limit, offset=offset)
         self._filters(filters, filters.keys())
         terms, args = [], []
         for key, value in [('severity', severity), ('evidence_state', evidence_state), ('repo_key', repo_key),
@@ -688,11 +780,6 @@ class SecurityService:
             terms.append("json_extract(f.data,'$.validation.level')=?"); args.append(validation_level)
         if owasp is not None:
             terms.append('EXISTS(SELECT 1 FROM json_each(f.owasp) WHERE value=?)'); args.append(owasp)
-        if source is not None:
-            terms.append("(json_extract(f.data,'$.source')=? OR EXISTS(SELECT 1 FROM json_each(f.detectors) WHERE value=?) "
-                         "OR (?='detector' AND json_array_length(f.detectors)>0) "
-                         "OR (?='worker' AND json_array_length(json_extract(f.data,'$.provenance.workerAttemptIds'))>0))")
-            args.extend([source] * 4)
         if q:
             columns = ['title', 'path', 'category', 'cwe', 'chain_text', 'root', 'repo_key']
             terms.append('(' + ' OR '.join('f.' + key + ' LIKE ?' for key in columns) + ')')
@@ -701,7 +788,7 @@ class SecurityService:
         if terms:
             base += ' WHERE ' + ' AND '.join(terms)
         columns = ('f.finding_id,f.occurrence_id,f.scan_id,f.severity,f.evidence_state,f.title,f.repo_key,f.root,'
-                   'f.path,f.category,f.cwe,f.owasp,f.detectors,f.chained,f.sealed_at,'
+                   'f.path,f.category,f.cwe,f.owasp,f.chained,f.sealed_at,'
                    "json_extract(f.data,'$.validation.level') AS validation_level,"
                    "COALESCE(t.state,'open') AS triage_state,t.note AS triage_note,t.updated_at AS triage_updated_at")
         with self.store._connection() as conn:
@@ -709,7 +796,7 @@ class SecurityService:
             items = []
             for row in conn.execute('SELECT ' + columns + base + ' ORDER BY f.rowid DESC LIMIT ? OFFSET ?', args + [limit, offset]):
                 item = dict(row)
-                for key in ('cwe', 'owasp', 'detectors'):
+                for key in ('cwe', 'owasp'):
                     item[key] = json.loads(item[key])
                 item['chained'] = bool(item['chained'])
                 item['triage'] = {'state': item.pop('triage_state'), 'note': item.pop('triage_note'),
@@ -722,7 +809,7 @@ class SecurityService:
         return {'items': self.store.events(scan_id, after_id=after_id, limit=limit)}
 
     def list_findings(self, **filters):
-        self._filters(filters, {'q', 'severity', 'evidence_state', 'triage', 'repo_key', 'owasp', 'detector', 'chained', 'scan_id', 'limit', 'offset'})
+        self._filters(filters, {'q', 'severity', 'evidence_state', 'triage', 'repo_key', 'owasp', 'chained', 'scan_id', 'limit', 'offset'})
         return self.store.list_findings(**filters)
 
     def get_finding(self, finding_id):

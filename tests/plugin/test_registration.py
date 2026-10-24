@@ -35,7 +35,7 @@ def test_registration_is_lazy_and_exact(tmp_path, monkeypatch):
     plugin.register(ctx)
     manifest = json.loads((Path(__file__).parents[2] / "plugin.yaml").read_text())
     assert set(ctx.tools) == set(manifest["provides_tools"])
-    assert len(ctx.tools) == 10
+    assert len(ctx.tools) == 9
     for name, (toolset, schema, handler) in ctx.tools.items():
         assert toolset == "security" and callable(handler)
         assert schema["name"] == name and schema["description"]
@@ -73,7 +73,7 @@ def test_old_host_without_cli_registration(tmp_path):
     ctx = FakeContext(tmp_path)
     ctx.register_cli_command = None
     register(ctx)
-    assert len(ctx.tools) == 10
+    assert len(ctx.tools) == 9
 
 
 def test_loads_under_synthetic_hermes_module_name(monkeypatch):
@@ -99,4 +99,4 @@ def test_loads_under_synthetic_hermes_module_name(monkeypatch):
     """)
     out = subprocess.run([sys.executable, "-c", code], cwd="/", capture_output=True, text=True, timeout=60)
     assert out.returncode == 0, out.stderr[-2000:]
-    assert out.stdout.strip() == "10"
+    assert out.stdout.strip() == "9"

@@ -13,6 +13,7 @@ from ..canonical import canonical_json, stable_id, utcnow
 from ..errors import Conflict, NotFound, SealedError, ValidationError
 from .migrations import migrate
 from . import leases
+from ..fsutil import is_link, set_private
 
 STATUSES = {
     "created",
@@ -49,19 +50,19 @@ class SecurityStore:
     def __init__(self, data_dir: Path, *, redactor=None):
         self.data_dir = Path(data_dir).absolute()
         self.data_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
-        os.chmod(self.data_dir, 0o700)
+        set_private(self.data_dir, 0o700)
         self.path = self.data_dir / "security.db"
-        if self.path.is_symlink():
+        if is_link(self.path):
             raise ValidationError("database may not be a symlink")
         scans = self.data_dir / "scans"
-        if scans.is_symlink():
+        if is_link(scans):
             raise ValidationError("scans directory may not be a symlink")
         scans.mkdir(exist_ok=True, mode=0o700)
-        os.chmod(scans, 0o700)
+        set_private(scans, 0o700)
         # Create privately before sqlite opens it (also constrains WAL/SHM modes).
-        fd = os.open(self.path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+        fd = os.open(self.path, os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0), 0o600)
         os.close(fd)
-        os.chmod(self.path, 0o600)
+        set_private(self.path, 0o600)
         self.redactor = redactor
         self._closed = False
         with self.transaction() as c:
@@ -252,6 +253,15 @@ class SecurityStore:
                 "UPDATE scans SET status=?,reason=? WHERE scan_id=?",
                 (status, reason, scan_id),
             )
+            return self._scan(c, scan_id)
+
+    def set_scan_option(self, scan_id, key, value):
+        """Attach UI metadata (such as the chat session running the scan) to a scan."""
+        with self.transaction() as c:
+            row = self._scan(c, scan_id)
+            options = dict(row["options"])
+            options[key] = value
+            c.execute("UPDATE scans SET options=? WHERE scan_id=?", (self._json(options), scan_id))
             return self._scan(c, scan_id)
 
     def inventory(self, scan_id, *, limit=None, offset=0):
@@ -459,15 +469,23 @@ class SecurityStore:
                 r["data"] = json.loads(r["data"])
             return rows
 
-    def record_coverage(self, scan_id, units, *, source):
+    def record_coverage(self, scan_id, units, *, source, monotonic=False):
+        """Upsert coverage. ``monotonic`` keeps a reviewed/not_applicable unit from being downgraded."""
+        guard = (" WHERE coverage_units.state NOT IN ('reviewed','not_applicable')"
+                 " OR excluded.state IN ('reviewed','not_applicable')") if monotonic else ""
         with self.transaction() as c:
             self._scan(c, scan_id, True)
             for unit in units:
                 uid = unit.get("unitId") or unit.get("unit")
                 if not uid or unit.get("state") not in COVERAGE:
                     raise ValidationError("invalid coverage unit")
+                # Keep every review that closed a unit, not only the latest one.
+                if unit["state"] in ("reviewed", "not_applicable"):
+                    old = c.execute("SELECT source,state,data FROM coverage_units WHERE scan_id=? AND unit_id=?", (scan_id, uid)).fetchone()
+                    prior = (json.loads(old[2]).get("closedBy") or [old[0]]) if old and old[1] in ("reviewed", "not_applicable") else []
+                    unit = {**unit, "closedBy": sorted(set(prior) | {source})}
                 c.execute(
-                    "INSERT INTO coverage_units VALUES(?,?,?,?,?) ON CONFLICT(scan_id,unit_id) DO UPDATE SET source=excluded.source,state=excluded.state,data=excluded.data",
+                    "INSERT INTO coverage_units VALUES(?,?,?,?,?) ON CONFLICT(scan_id,unit_id) DO UPDATE SET source=excluded.source,state=excluded.state,data=excluded.data" + guard,
                     (scan_id, uid, source, unit["state"], self._json(unit)),
                 )
                 self._event(
@@ -496,23 +514,11 @@ class SecurityStore:
             raise ValidationError("receiptId required")
         with self.transaction() as c:
             self._scan(c, scan_id, True)
-            if table == "validations":
-                c.execute(
-                    "INSERT INTO validations VALUES(?,?,?,?) ON CONFLICT(scan_id,receipt_id) DO UPDATE SET candidate_id=excluded.candidate_id,data=excluded.data",
-                    (scan_id, rid, receipt.get("candidateId"), self._json(receipt)),
-                )
-            else:
-                c.execute(
-                    "INSERT INTO detector_runs VALUES(?,?,?) ON CONFLICT(scan_id,receipt_id) DO UPDATE SET data=excluded.data",
-                    (scan_id, rid, self._json(receipt)),
-                )
+            c.execute(
+                "INSERT INTO validations VALUES(?,?,?,?) ON CONFLICT(scan_id,receipt_id) DO UPDATE SET candidate_id=excluded.candidate_id,data=excluded.data",
+                (scan_id, rid, receipt.get("candidateId"), self._json(receipt)),
+            )
             return json.loads(self._json(receipt))
-
-    def record_detector_run(self, scan_id, receipt):
-        return self._receipt("detector_runs", scan_id, receipt)
-
-    def detector_runs(self, scan_id):
-        return self._documents("detector_runs", scan_id)
 
     def record_validation(self, scan_id, receipt):
         return self._receipt("validations", scan_id, receipt)
@@ -602,16 +608,15 @@ class SecurityStore:
                     taxonomy.get("category", ""),
                     self._json(taxonomy.get("cwe", [])),
                     self._json(taxonomy.get("owasp", [])),
-                    self._json(f.get("provenance", {}).get("detectors", [])),
                     int(bool(matching)),
                     self._json(matching),
                     None,
                     self._json(f),
                 )
                 c.execute(
-                    """INSERT INTO findings VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(scan_id,occurrence_id) DO UPDATE SET
+                    """INSERT INTO findings VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(scan_id,occurrence_id) DO UPDATE SET
                     finding_id=excluded.finding_id,severity=excluded.severity,evidence_state=excluded.evidence_state,title=excluded.title,
-                    path=excluded.path,category=excluded.category,cwe=excluded.cwe,owasp=excluded.owasp,detectors=excluded.detectors,
+                    path=excluded.path,category=excluded.category,cwe=excluded.cwe,owasp=excluded.owasp,
                     chained=excluded.chained,chain_text=excluded.chain_text,data=excluded.data""",
                     values,
                 )
@@ -625,7 +630,6 @@ class SecurityStore:
         triage=None,
         repo_key=None,
         owasp=None,
-        detector=None,
         chained=None,
         scan_id=None,
         limit=50,
@@ -646,10 +650,9 @@ class SecurityStore:
         if triage is not None:
             terms.append("COALESCE(t.state,'open')=?")
             args.append(triage)
-        for key, val in [("owasp", owasp), ("detectors", detector)]:
-            if val is not None:
-                terms.append(f"EXISTS(SELECT 1 FROM json_each(f.{key}) WHERE value=?)")
-                args.append(val)
+        if owasp is not None:
+            terms.append("EXISTS(SELECT 1 FROM json_each(f.owasp) WHERE value=?)")
+            args.append(owasp)
         if q:
             terms.append(
                 "("
@@ -675,14 +678,14 @@ class SecurityStore:
         with self._connection() as c:
             total = c.execute("SELECT count(*)" + base, args).fetchone()[0]
             # Deliberately never SELECT data: list responses cannot leak full evidence blobs.
-            sql = "SELECT f.finding_id,f.occurrence_id,f.scan_id,f.severity,f.evidence_state,f.title,f.repo_key,f.root,f.path,f.category,f.cwe,f.owasp,f.detectors,f.chained,f.sealed_at,COALESCE(t.state,'open') AS triage_state,t.note AS triage_note,t.updated_at AS triage_updated_at"
+            sql = "SELECT f.finding_id,f.occurrence_id,f.scan_id,f.severity,f.evidence_state,f.title,f.repo_key,f.root,f.path,f.category,f.cwe,f.owasp,f.chained,f.sealed_at,COALESCE(t.state,'open') AS triage_state,t.note AS triage_note,t.updated_at AS triage_updated_at"
             items = []
             for row in c.execute(
                 sql + base + " ORDER BY f.rowid DESC LIMIT ? OFFSET ?",
                 args + [limit, offset],
             ):
                 item = dict(row)
-                for key in ("cwe", "owasp", "detectors"):
+                for key in ("cwe", "owasp"):
                     item[key] = json.loads(item[key])
                 item["chained"] = bool(item["chained"])
                 item["triage"] = {
@@ -764,8 +767,6 @@ class SecurityStore:
                         ('lane:A01:2025','lane:A02:2025','lane:A03:2025','lane:A04:2025','lane:A05:2025',
                          'lane:A06:2025','lane:A07:2025','lane:A08:2025','lane:A09:2025','lane:A10:2025')
                         AND u.state IN ('reviewed','not_applicable'))=10
-                    AND NOT EXISTS(SELECT 1 FROM detector_runs d WHERE d.scan_id=s.scan_id
-                        AND json_extract(d.data,'$.status') NOT IN ('ok','unavailable'))
                     THEN 'complete' ELSE 'partial' END AS coverage_completeness
                 FROM scans s WHERE s.rowid=(SELECT max(s2.rowid) FROM scans s2 WHERE s2.repo_key=s.repo_key)
                 ORDER BY s.rowid DESC LIMIT ? OFFSET ?""",

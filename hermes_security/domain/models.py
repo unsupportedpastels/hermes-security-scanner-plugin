@@ -40,7 +40,7 @@ def normalize_candidate(raw: dict, *, scan_id) -> dict:
     defaults = {'proofGaps': [], 'counterEvidence': [], 'validation': {'status': 'NOT_RUN', 'level': 'static', 'receiptIds': [], 'summary': ''},
                 'source': 'worker', 'evidenceState': 'candidate', 'codeEvidence': [],
                 'capabilities': {'preconditions': [], 'effects': []}, 'secret': None, 'diffAttribution': None,
-                'provenance': {'methodologyVersion': 'hermes-security/method-1', 'workerAttemptIds': [], 'sourceCandidateIds': [], 'detectors': [], 'supersedes': None}}
+                'provenance': {'methodologyVersion': 'hermes-security/method-1', 'workerAttemptIds': [], 'sourceCandidateIds': [], 'supersedes': None}}
     for key, value in defaults.items():
         result.setdefault(key, value)
         if isinstance(value, dict) and isinstance(result[key], dict):

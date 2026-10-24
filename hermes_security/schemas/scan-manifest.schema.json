@@ -306,6 +306,23 @@
         "upstream"
       ],
       "additionalProperties": false
+    },
+    "dependencyCheck": {
+      "type": "object",
+      "description": "Receipt of the pre-review dependency check (OSV advisories and runtime end of life).",
+      "properties": {
+        "status": {
+          "enum": [
+            "ok",
+            "no_sources",
+            "not_run",
+            "disabled"
+          ]
+        }
+      },
+      "required": [
+        "status"
+      ]
     }
   },
   "required": [

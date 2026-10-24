@@ -3,6 +3,7 @@ from copy import deepcopy
 import json
 from pathlib import Path
 import pytest
+from tests.support import make_link, outside_system_dir
 from hermes_security.errors import SecurityError, ValidationError, Conflict, PolicyDenied
 from hermes_security.service import SecurityService
 from hermes_security.validation import build_receipt, static_receipt
@@ -99,16 +100,16 @@ def test_grant_cannot_run_local_commands_from_agent_tool(tmp_path, safety):
 
 def test_symlinked_data_dir_ancestor_is_resolved(tmp_path):
     real = tmp_path / 'real'; real.mkdir()
-    (tmp_path / 'alias').symlink_to(real)
+    make_link(tmp_path / 'alias', real, directory=True)
     root = tmp_path / 'repo'; root.mkdir()
     (root / 'app.py').write_text('x = 1\n')
     service = SecurityService(tmp_path / 'alias' / 'data')
     assert service.data_dir == real / 'data'
     sid = service.start_scan(path=str(root))['scanId']
-    assert service.run_detectors(sid, ['builtin-secrets'])['receipts'][0]['status'] == 'ok'
+    assert service.coverage(sid)['scanId'] == sid
 
 
-def test_grants_only_apply_to_active_authorized_scans(tmp_path):
+def test_user_grant_authorizes_app_testing_on_any_scan(tmp_path):
     root, service, plan = setup(tmp_path)
     sid = plan['scanId']
     service.submit_worker_result(worker(plan, [candidate_for(root)]))
@@ -118,10 +119,18 @@ def test_grants_only_apply_to_active_authorized_scans(tmp_path):
     probe = {'candidateId': cid, 'kind': 'http-probe', 'level': 'active-authorized', 'grantId': grant['grantId'],
              'requests': [{'url': 'http://127.0.0.1:9/a'}, {'url': 'http://127.0.0.1:9/b'}],
              'positiveControl': {'requestIndex': 0, 'expectedMarker': 'X'}, 'negativeControl': {'requestIndex': 1},
-             'cleanup': {'strategy': 'none'}, 'timeoutS': 1}
+             'timeoutS': 1}
+    # Without the user's grant nothing is sent.
     with pytest.raises(PolicyDenied):
-        service.record_validations(sid, plans=[probe])
+        service.record_validations(sid, plans=[{**probe, 'grantId': 'grt_missing'}])
+    other = {**probe, 'requests': [{'url': 'http://127.0.0.1:10/a'}, {'url': 'http://127.0.0.1:10/b'}]}
+    with pytest.raises(PolicyDenied):
+        service.record_validations(sid, plans=[other])
     assert service.store.get_grant(grant['grantId'])['used'] == 0
+    # The grant alone authorizes probes of its origin (port 9 refuses: inconclusive).
+    receipt = service.record_validations(sid, plans=[probe])['receipts'][0]
+    assert receipt['status'] == 'inconclusive'
+    assert service.store.get_grant(grant['grantId'])['used'] == 2
 
 
 def test_semantic_subsumption_schema_and_conservation(tmp_path):
@@ -150,13 +159,3 @@ def test_semantic_subsumption_schema_and_conservation(tmp_path):
 def test_public_misuse_is_domain_error(tmp_path, method, arguments):
     service = SecurityService(tmp_path / 'data')
     with pytest.raises(SecurityError): getattr(service, method)(**arguments)
-
-
-def test_import_sarif_and_untrusted_options(tmp_path):
-    root, service, plan = setup(tmp_path)
-    sarif = tmp_path / 'results.sarif'
-    sarif.write_text(json.dumps({'version': '2.1.0', 'runs': [{'tool': {'driver': {'name': 'test'}}, 'results': [{'ruleId': 'test.rule', 'message': {'text': 'Review code'}, 'locations': [{'physicalLocation': {'artifactLocation': {'uri': 'app.py'}, 'region': {'startLine': 1}}}]}]}]}))
-    result = service.import_detector_results(plan['scanId'], sarif_path=str(sarif))
-    assert result['inserted'] == 1 and result['receipts'][0]['status'] == 'ok'
-    assert service.import_detector_results(plan['scanId'], detector='builtin-secrets', run=True)['receipts']
-    with pytest.raises(ValidationError): service.start_scan(path=str(root), detectorOptions={'semgrep': {'work_dir': str(root)}})

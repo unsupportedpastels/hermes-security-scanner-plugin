@@ -14,6 +14,8 @@ def is_untrusted_instruction_file(path):
 def matches_scope(path, scope):
     def match(pattern):
         if fnmatch.fnmatchcase(path, pattern): return True
+        # A plain name (no wildcard) is a folder: "tools" or "tools/" covers everything under it.
+        if not any(ch in pattern for ch in '*?[') and path.startswith(pattern.rstrip('/') + '/'): return True
         # **/ matches zero directory components as well as one or more.
         if '**/' in pattern:
             before, after = pattern.split('**/', 1)

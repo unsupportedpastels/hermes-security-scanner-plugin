@@ -18,6 +18,7 @@ from ..errors import ValidationError
 from .copy import REPORTABLE, SEVERITIES, _sections, distinct_sections
 from .markdown import render_markdown
 from .sarif import render_sarif
+from ..fsutil import is_link
 
 ARTIFACTS = frozenset({'findings.json', 'coverage.json', 'chains.json', 'report.md', 'exports/results.sarif'})
 
@@ -83,8 +84,6 @@ def _coverage_gaps(coverage):
     for unit in coverage.get('units', []):
         if unit.get('state') not in done:
             gaps.append(f"Review unit {unit.get('unitId', 'unknown')} is incomplete.")
-    if any(d.get('status') != 'ok' for d in coverage.get('detectors', [])):
-        gaps.append('One or more detector runs did not complete successfully.')
     if any(w.get('status') == 'missing' for w in coverage.get('workers', [])):
         gaps.append('A review worker result is missing.')
     return list(dict.fromkeys(gaps))
@@ -165,11 +164,11 @@ def _read_local(root: Path, rel: str) -> bytes:
     if not rel or path.is_absolute() or any(p in {'.', '..', ''} for p in rel.split('/')) or '\\' in rel:
         raise ReportError(f'Unsafe artifact path: {rel}')
     current = root
-    if root.is_symlink() or not root.is_dir():
+    if is_link(root) or not root.is_dir():
         raise ReportError('Scan directory is not a regular directory')
     for part in path.parts:
         current = current / part
-        if current.is_symlink():
+        if is_link(current):
             raise ReportError(f'Symlink artifact path: {rel}')
     if not stat.S_ISREG(current.stat().st_mode):
         raise ReportError(f'Not a regular artifact: {rel}')
@@ -223,14 +222,14 @@ def verify_bundle(scan_dir: Path) -> dict:
             except (OSError, ValueError) as exc:
                 problems.append(f'Missing or unsafe artifact {rel}: {exc}')
         exports = root / 'exports'
-        if exports.is_symlink():
+        if is_link(exports):
             problems.append('Exports directory is a symlink')
         elif exports.exists():
             for directory, dirs, files in os.walk(exports, followlinks=False):
                 for name in dirs + files:
                     p = Path(directory) / name
                     rel = p.relative_to(root).as_posix()
-                    if p.is_symlink() or (name in files and rel not in artifacts):
+                    if is_link(p) or (name in files and rel not in artifacts):
                         problems.append(f'Unexpected export: {rel}')
     except (OSError, ValueError, TypeError, KeyError) as exc:
         problems.append(f'Cannot verify bundle: {exc}')

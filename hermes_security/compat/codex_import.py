@@ -14,6 +14,7 @@ from ..domain.identities import scan_id as make_scan_id
 from ..domain.models import normalize_candidate, promote_to_finding
 from ..domain.validate import validate_document
 from ..target.excerpt import redact_secrets
+from ..fsutil import is_link
 
 
 def _text(value):
@@ -26,7 +27,7 @@ def _text(value):
 
 def _read(path, kind):
     try:
-        if path.is_symlink() or path.stat().st_size > 16 * 1024 * 1024:
+        if is_link(path) or path.stat().st_size > 16 * 1024 * 1024:
             raise ValidationError('upstream artifact is a symlink or exceeds 16 MiB')
         def reject_constant(_):
             raise ValueError('non-finite JSON')
@@ -81,7 +82,7 @@ def import_codex_bundle(bundle_dir: Path) -> dict:
                 'locations': [{k: v for k, v in loc.items() if k in ('path', 'startLine', 'endLine', 'role')} for loc in raw['locations']],
                 'remediation': {'summary': _text(rem), 'regressionTests': raw.get('remediationTests', [])},
                 'evidenceState': 'source_supported', 'source': 'worker',
-                'provenance': {'methodologyVersion': 'hermes-security/method-1', 'workerAttemptIds': [], 'sourceCandidateIds': [], 'detectors': [], 'supersedes': raw.get('findingId'), 'upstream': deepcopy(raw)},
+                'provenance': {'methodologyVersion': 'hermes-security/method-1', 'workerAttemptIds': [], 'sourceCandidateIds': [], 'supersedes': raw.get('findingId'), 'upstream': deepcopy(raw)},
             }
             candidate['codeEvidence'] = []
             for entry in raw.get('codeEvidence', []):
@@ -106,7 +107,7 @@ def import_codex_bundle(bundle_dir: Path) -> dict:
                 findings['retained'].append(candidate)
         except (KeyError, TypeError, AttributeError) as exc:
             raise ValidationError('upstream finding has malformed required fields') from exc
-    coverage = wrap('coverage', completeness='partial', files={'total': 0, 'reviewed': 0, 'deferred': 0, 'unsupported': 0, 'excluded': []}, units=[], standards={'owaspTop10': {'version': '2025', 'categories': []}, 'asvs': {'version': '5.0.0', 'controls': []}}, detectors=[], workers=[], gaps=['Imported bundle does not establish Hermes inventory or standards coverage.'], provenance={'upstream': deepcopy(originals['coverage'])})
+    coverage = wrap('coverage', completeness='partial', files={'total': 0, 'reviewed': 0, 'deferred': 0, 'unsupported': 0, 'excluded': []}, units=[], standards={'owaspTop10': {'version': '2025', 'categories': []}, 'asvs': {'version': '5.0.0', 'controls': []}}, workers=[], gaps=['Imported bundle does not establish Hermes inventory or standards coverage.'], provenance={'upstream': deepcopy(originals['coverage'])})
     chains = wrap('chains', vocabularyVersion='hermes-security/capabilities-1', chains=[], broken=[])
     counts = {k: sum(f['severity']['level'] == k for f in findings['findings']) for k in ('critical', 'high', 'medium', 'low', 'informational')}
     counts.update(retained=len(findings['retained']), chains=0)

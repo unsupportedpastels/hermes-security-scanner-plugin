@@ -13,6 +13,9 @@ PATTERNS = [
     ('jwt', re.compile(r'eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+')),
 ]
 ASSIGNMENT = re.compile(r'''(?ix)\b(?:password|passwd|secret|token|api[_-]?key)\b["']?\s*[:=]\s*(?:["'](?P<quoted>[^"'\r\n]{8,})["']|(?P<bare>[A-Za-z0-9_./+=!@#$%^&*-]{12,}))''')
+CALL = re.compile(r'\s*\(')
+# snake_case or CONSTANT_CASE names, optionally dotted: one case, no digits, so never a generated key.
+NAME = re.compile(r'(?=.*[_.])(?:[a-z]+(?:_[a-z]+)*|[A-Z]+(?:_[A-Z]+)*)(?:\.(?:[a-z]+(?:_[a-z]+)*|[A-Z]+(?:_[A-Z]+)*))*')
 BOUNDARY = re.compile(r'[A-Za-z0-9_./+=-]{20,}')
 PREFIX = re.compile(r'(?:AKIA|ASIA|gh[pousr]_|github_pat_|xox[baprs]-|[sr]k_(?:live|test)_|eyJ)')
 
@@ -31,6 +34,12 @@ def redact_secrets(text):
         group = 'quoted' if match.group('quoted') is not None else 'bare'
         value = match.group(group)
         if re.fullmatch(r'\[REDACTED:[a-z-]+:sha256:[0-9a-f]{16}\]', value):
+            continue
+        # `api_key = resolve_key()` is code, not a value; a literal is never followed by a call.
+        if group == 'bare' and CALL.match(text, match.end(group)):
+            continue
+        # `"api_key": explicit_key` names a variable; a bare name is not a value.
+        if group == 'bare' and NAME.fullmatch(value):
             continue
         if _entropy(value) >= 3.0:
             spans.append((*match.span(group), 'generic-secret'))

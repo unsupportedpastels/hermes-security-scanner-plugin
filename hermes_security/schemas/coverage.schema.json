@@ -88,7 +88,6 @@
               "file",
               "lane",
               "asvs",
-              "detector",
               "worker"
             ]
           },
@@ -162,6 +161,10 @@
                     }
                   },
                   "reason": {
+                    "type": "string",
+                    "maxLength": 20000
+                  },
+                  "name": {
                     "type": "string",
                     "maxLength": 20000
                   }
@@ -244,139 +247,6 @@
       ],
       "additionalProperties": false
     },
-    "detectors": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "properties": {
-          "receiptId": {
-            "type": "string",
-            "maxLength": 20000,
-            "minLength": 1
-          },
-          "detector": {
-            "type": "string",
-            "maxLength": 20000,
-            "minLength": 1
-          },
-          "kind": {
-            "enum": [
-              "sast",
-              "secrets",
-              "sca",
-              "iac",
-              "sarif"
-            ]
-          },
-          "status": {
-            "enum": [
-              "ok",
-              "failed",
-              "timeout",
-              "unavailable",
-              "parse_error"
-            ]
-          },
-          "executable": {
-            "anyOf": [
-              {
-                "type": "string",
-                "maxLength": 20000
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "version": {
-            "anyOf": [
-              {
-                "type": "string",
-                "maxLength": 20000
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "ruleVersion": {
-            "anyOf": [
-              {
-                "type": "string",
-                "maxLength": 20000
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "commandDigest": {
-            "anyOf": [
-              {
-                "type": "string",
-                "maxLength": 20000
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "exitCode": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "durationMs": {
-            "type": "number",
-            "minimum": 0
-          },
-          "targetFileCount": {
-            "type": "integer",
-            "minimum": 0
-          },
-          "resultCount": {
-            "type": "integer",
-            "minimum": 0
-          },
-          "truncated": {
-            "type": "boolean"
-          },
-          "error": {
-            "anyOf": [
-              {
-                "type": "string",
-                "maxLength": 20000
-              },
-              {
-                "type": "null"
-              }
-            ]
-          }
-        },
-        "required": [
-          "receiptId",
-          "detector",
-          "kind",
-          "status",
-          "executable",
-          "version",
-          "ruleVersion",
-          "commandDigest",
-          "exitCode",
-          "durationMs",
-          "targetFileCount",
-          "resultCount",
-          "truncated",
-          "error"
-        ],
-        "additionalProperties": false
-      }
-    },
     "workers": {
       "type": "array",
       "items": {
@@ -438,7 +308,6 @@
     "files",
     "units",
     "standards",
-    "detectors",
     "workers",
     "gaps"
   ],

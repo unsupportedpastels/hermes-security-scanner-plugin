@@ -1,8 +1,10 @@
 """Deterministic inventory with descriptor-relative, no-follow file reads.
 
-POSIX openat pins every directory component against symlink-swap races. Windows
-reparse-point races require native handle APIs and are not supported: fail closed
-on platforms without dir_fd/O_NOFOLLOW rather than claim equivalent protection.
+POSIX openat pins every directory component against symlink-swap races. On
+Windows the same pinning uses NT handle-relative opens with
+FILE_OPEN_REPARSE_POINT; symlinks, junctions and mount points are refused like
+POSIX symlinks. Other platforms without either primitive fail closed rather
+than claim equivalent protection.
 """
 import os
 import stat
@@ -11,6 +13,10 @@ from ..canonical import sha256_hex
 from ..errors import TargetError
 from .resolve import git_bytes
 from .policy import classify, exclusion_reason, is_untrusted_instruction_file
+from ..fsutil import is_link
+
+if os.name == 'nt':
+    from .. import _win32
 
 
 class FileRejected(TargetError):
@@ -25,20 +31,7 @@ def validate_path(path):
     return PurePosixPath(path).parts
 
 
-def safe_read(root, path, max_bytes=2_000_000):
-    parts = validate_path(path)
-    root = Path(root).resolve(strict=True)
-    if not hasattr(os, 'O_NOFOLLOW') or os.open not in os.supports_dir_fd:
-        raise FileRejected('unsupported_platform')
-    # Checking every lstat also yields a stable human-readable exclusion reason.
-    current = root
-    for part in parts:
-        current = current / part
-        if current.is_symlink(): raise FileRejected('symlink')
-    try:
-        current.resolve(strict=True).relative_to(root)
-    except (ValueError, OSError, RuntimeError) as exc:
-        raise FileRejected('outside_root_or_missing') from exc
+def _open_chain_posix(root, parts):
     descriptors = []
     try:
         fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
@@ -48,6 +41,49 @@ def safe_read(root, path, max_bytes=2_000_000):
             descriptors.append(fd)
         fd = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=fd)
         descriptors.append(fd)
+    except BaseException:
+        for d in reversed(descriptors): os.close(d)
+        raise
+    return fd, lambda: [os.close(d) for d in reversed(descriptors)]
+
+
+def _open_chain_nt(root, parts):
+    handles = []
+    try:
+        handles.append(_win32.open_dir_path(root))
+        for part in parts[:-1]:
+            handles.append(_win32.open_dir(handles[-1], part))
+        fd = _win32.open_file_read(handles[-1], parts[-1]).into_fd(os.O_RDONLY)
+    except BaseException:
+        for h in reversed(handles): h.close()
+        raise
+    def close():
+        os.close(fd)
+        for h in reversed(handles): h.close()
+    return fd, close
+
+
+def _platform_supported():
+    return os.name == 'nt' or (hasattr(os, 'O_NOFOLLOW') and os.open in os.supports_dir_fd)
+
+
+def safe_read(root, path, max_bytes=2_000_000):
+    parts = validate_path(path)
+    root = Path(root).resolve(strict=True)
+    if not _platform_supported():
+        raise FileRejected('unsupported_platform')
+    # Checking every lstat also yields a stable human-readable exclusion reason.
+    current = root
+    for part in parts:
+        current = current / part
+        if is_link(current): raise FileRejected('symlink')
+    try:
+        current.resolve(strict=True).relative_to(root)
+    except (ValueError, OSError, RuntimeError) as exc:
+        raise FileRejected('outside_root_or_missing') from exc
+    close = None
+    try:
+        fd, close = (_open_chain_nt if os.name == 'nt' else _open_chain_posix)(root, parts)
         before = os.fstat(fd)
         if not stat.S_ISREG(before.st_mode): raise FileRejected('not_regular')
         if before.st_size > max_bytes: raise FileRejected('too_large')
@@ -61,12 +97,12 @@ def safe_read(root, path, max_bytes=2_000_000):
         now = os.stat(current, follow_symlinks=False)
         if (before.st_size, before.st_mtime_ns, before.st_ctime_ns) != (after.st_size, after.st_mtime_ns, after.st_ctime_ns) or (now.st_dev, now.st_ino) != (after.st_dev, after.st_ino):
             raise FileRejected('changed_during_read')
-        if current.is_symlink() or not current.resolve().is_relative_to(root): raise FileRejected('symlink')
+        if is_link(current) or not current.resolve().is_relative_to(root): raise FileRejected('symlink')
         return b''.join(chunks), after
     except OSError as exc:
         raise FileRejected('unreadable') from exc
     finally:
-        for fd in reversed(descriptors): os.close(fd)
+        if close is not None: close()
 
 
 def _directory_paths(root):
@@ -76,14 +112,14 @@ def _directory_paths(root):
         dirs.sort(); files.sort()
         for name in list(dirs):
             p = Path(parent) / name
-            if name == '.git' or p.is_symlink():
+            if name == '.git' or is_link(p):
                 dirs.remove(name)
                 yield p.relative_to(root).as_posix()
         for name in files:
             yield (Path(parent) / name).relative_to(root).as_posix()
 
 
-def build_inventory(target, *, max_file_bytes=2_000_000, max_files=50_000):
+def build_inventory(target, *, max_file_bytes=8_000_000, max_files=100_000):
     if not isinstance(max_file_bytes, int) or max_file_bytes < 1 or not isinstance(max_files, int) or max_files < 1:
         raise TargetError('Inventory limits must be positive integers')
     root = Path(target['root'])
@@ -102,7 +138,7 @@ def build_inventory(target, *, max_file_bytes=2_000_000, max_files=50_000):
         try:
             validate_path(path)
             if path in submodules: raise FileRejected('submodule')
-            if (root / path).is_symlink(): raise FileRejected('symlink')
+            if is_link(root / path): raise FileRejected('symlink')
             reason = exclusion_reason(path, target.get('scope', []))
             if reason: raise FileRejected(reason)
             if len(files) >= max_files:

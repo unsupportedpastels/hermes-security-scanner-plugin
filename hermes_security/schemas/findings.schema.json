@@ -631,14 +631,6 @@
                 "pattern": "^cand_[a-f0-9]{24}$(?![\\s\\S])"
               }
             },
-            "detectors": {
-              "type": "array",
-              "items": {
-                "type": "string",
-                "maxLength": 20000,
-                "minLength": 1
-              }
-            },
             "supersedes": {
               "anyOf": [
                 {
@@ -679,8 +671,7 @@
         },
         "source": {
           "enum": [
-            "worker",
-            "detector"
+            "worker"
           ]
         }
       },
@@ -1365,14 +1356,6 @@
                 "pattern": "^cand_[a-f0-9]{24}$(?![\\s\\S])"
               }
             },
-            "detectors": {
-              "type": "array",
-              "items": {
-                "type": "string",
-                "maxLength": 20000,
-                "minLength": 1
-              }
-            },
             "supersedes": {
               "anyOf": [
                 {
@@ -1405,7 +1388,6 @@
             "methodologyVersion",
             "workerAttemptIds",
             "sourceCandidateIds",
-            "detectors",
             "supersedes"
           ],
           "additionalProperties": false

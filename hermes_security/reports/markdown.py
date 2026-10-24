@@ -18,6 +18,48 @@ def _bullets(values, fallback='None recorded.'):
     return '\n'.join('- ' + _text(v) for v in values) if values else fallback
 
 
+def _dependency_section(check):
+    """Known advisories are leads: they say a package version is affected, not that this code reaches it."""
+    if not check:
+        return []
+    parts = ['## Dependency check']
+    status = check.get('status')
+    if status == 'disabled':
+        return parts + [f"Not run: {_text(check.get('reason'), 'turned off')}. Known-vulnerable dependencies were not checked."]
+    if status == 'no_sources':
+        return parts + [f"Nothing to check: {_text(check.get('reason'))}. No package versions in scope were "
+                        'checked for published advisories.']
+    if status != 'ok':
+        return parts + [f"**Not run:** {_text(check.get('reason'), 'unknown error')}. Known-vulnerable dependencies "
+                        'were not checked, so this report says nothing about them.']
+    tool = check.get('tool') or {}
+    parts.append(f"{check.get('vulnerablePackages', 0)} of {check.get('packages', 0)} packages in "
+                 f"{len(check.get('sources', []))} manifest or lockfile(s) have published advisories "
+                 f"({check.get('advisories', 0)} in total), checked with {_text(tool.get('name'))} "
+                 f"{_text(tool.get('version'), 'version not recorded')}. Package names and versions were sent to "
+                 + _text(', '.join(check.get('network', [])), 'no network service') + '. '
+                 'An advisory means the version is affected, not that this code reaches the vulnerable behaviour; '
+                 'reviewed reachability appears in the findings above.')
+    leads = check.get('leads', [])
+    if leads:
+        rows = [f"| {_text(l.get('name'))} | {_text(l.get('version'))} | {_text(l.get('path'))} | {human_label(l.get('severity', 'unknown'))} | "
+                + _text(', '.join(a.get('id', '') for a in l.get('advisories', [])[:4])
+                        + (f" +{len(l['advisories']) - 4} more" if len(l.get('advisories', [])) > 4 else '')) + ' |'
+                for l in leads]
+        more = check.get('vulnerablePackages', 0) - len(leads)
+        parts.append('| Package | Version | Declared in | Worst severity | Advisories |\n|---|---|---|---|---|\n' + '\n'.join(rows))
+        if more > 0:
+            parts.append(f'{more} more vulnerable packages are listed in the scan data (section dependencies).')
+    for r in check.get('runtimes', []):
+        where = f"{_text(r.get('runtime'))} {_text(r.get('declared'))} in {_text(r.get('path'))}"
+        ended = f"support for {_text(r.get('cycle'))} ended {_text(r.get('eolDate'), 'on a date not recorded')}"
+        if r.get('status') == 'end_of_life':
+            parts.append(f'Runtime past end of life: {where} ({ended}).')
+        elif r.get('status') == 'allows_end_of_life':
+            parts.append(f'Runtime minimum is past end of life: {where} still permits it ({ended}).')
+    return parts
+
+
 def render_markdown(manifest: dict, findings_doc: dict, coverage: dict, chains_doc: dict) -> str:
     """Project semantic documents without reading the target or generating times."""
     findings = _reportable(findings_doc)
@@ -41,8 +83,16 @@ def render_markdown(manifest: dict, findings_doc: dict, coverage: dict, chains_d
     files = coverage.get('files', {})
     parts.append(f"Files: {files.get('reviewed', 0)} reviewed of {files.get('total', 0)}; "
                  f"{files.get('deferred', 0)} deferred; {files.get('unsupported', 0)} unsupported.")
-    for item in files.get('excluded', []):
+    excluded = files.get('excluded', [])
+    out_of_scope = sum(item.get('reason') == 'out_of_scope' for item in excluded)
+    if out_of_scope:
+        parts.append(f'Outside the requested scope: {out_of_scope} files (not reviewed).')
+    listed = [item for item in excluded if item.get('reason') != 'out_of_scope']
+    for item in listed[:200]:
         parts.append(f"Excluded: {_text(item.get('path'))} — {_text(item.get('reason'))}.")
+    if len(listed) > 200:
+        parts.append(f'{len(listed) - 200} more excluded files are listed in coverage.json.')
+    parts.extend(_dependency_section(manifest.get('dependencyCheck')))
     categories = coverage.get('standards', {}).get('owaspTop10', {}).get('categories', [])
     by_id = {c['id']: c for c in categories}
     rows = []
@@ -51,10 +101,13 @@ def render_markdown(manifest: dict, findings_doc: dict, coverage: dict, chains_d
         rows.append(f"| {key} | {_text(c.get('name', ''))} | {human_label(c.get('state', 'unknown'))} | {_text(c.get('reason'))} |")
     parts.extend(['### OWASP Top 10:2025', 'Common web application risk categories and the review work completed for each.',
                   '| Category | Name | Review state | Reason |\n|---|---|---|---|\n' + '\n'.join(rows)])
-    for unit in coverage.get('units', []):
+    units = coverage.get('units', [])
+    open_units = [u for u in units if u.get('state') not in {'reviewed', 'not_applicable'}]
+    if len(units) > len(open_units):
+        # Per-unit notes for closed units made reports hundreds of KB; coverage.json keeps them.
+        parts.append(f'{len(units) - len(open_units)} coverage units are closed; their review notes are in coverage.json.')
+    for unit in open_units:
         parts.append(f"- {_text(unit.get('unitId'))}: {human_label(unit.get('state', 'unknown'))} — {_text(unit.get('reason'))}")
-    for detector in coverage.get('detectors', []):
-        parts.append(f"- Detector {_text(detector.get('detector'))}: {_text(detector.get('status'))} — {_text(detector.get('error'), 'No error recorded')}")
     for worker in coverage.get('workers', []):
         parts.append(f"- Review worker {_text(worker.get('attemptId'))}: {_text(worker.get('status'))}")
     for f in findings:

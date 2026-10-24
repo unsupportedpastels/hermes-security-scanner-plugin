@@ -153,7 +153,7 @@ def test_occurrences_latest_and_coverage(tmp_path):
     units.append({"unit": "file:x", "state": "reviewed"})
     s.record_coverage(b, units, source="review")
     assert s.list_repositories()["items"][0]["coverage_completeness"] == "complete"
-    s.record_detector_run(b, {"receiptId": "d", "status": "failed"})
+    s.record_coverage(b, [{"unit": "file:y", "state": "deferred"}], source="review")
     assert s.list_repositories()["items"][0]["coverage_completeness"] == "partial"
     assert s.list_findings(q="' OR 1=1 --")["total"] == 0
 

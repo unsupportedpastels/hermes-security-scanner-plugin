@@ -36,14 +36,13 @@ Local loopback/disposable validation in the existing contract suite is retained.
   static checks do not become runtime confirmation.
 - **Isolation:** scan/packet/snapshot binding, cross-scan schema references and
   profile isolation are exercised against the real service/storage code.
-- **Truncation:** oversized worker fields, bounded SARIF and inventory limits;
-  inventory truncation and truncated detector output must leave explicit gaps.
+- **Truncation:** oversized worker fields and inventory limits; inventory
+  truncation must leave an explicit gap.
   This is bounded canary coverage, not proof that every possible pagination or
   chain budget is exhaustive.
-- **False-clean:** unsupported detector integration, failed/unknown/unavailable
-  receipts and truncated successful output are tested. The direct coverage matrix
-  first proves the otherwise-complete baseline, so an unrelated gap cannot mask a
-  detector failure.
+- **False-clean:** missing report sections and unreviewed files/lanes keep a scan
+  partial. The coverage canary first proves the otherwise-complete baseline, so an
+  unrelated gap cannot mask a real one.
 - **Chains:** runs the existing, unchanged `scripts/eval_chains.py` over all 12
   existing fixtures. Precision >=95%, recall >=85%, invented edges =0. The existing
   runner additionally requires exact fixture agreement; no chain implementation
@@ -264,11 +263,11 @@ citation-resolution-and-forgery-rejection | 100% executed non-skipped tests | 1.
 zero-fabricated-runtime-claims | 100% executed non-skipped tests | 1.0 | PASS
 zero-cross-scan-contamination | 100% executed non-skipped tests | 1.0 | PASS
 no-hidden-truncation-input-canaries | 100% executed non-skipped tests | 1.0 | PASS
-no-false-clean-unavailable-detectors | 100% executed non-skipped tests | 1.0 | PASS
+no-false-clean-missing-sections | 100% executed non-skipped tests | 1.0 | PASS
 chain-precision | 0.95 | 1.0 | PASS
 chain-recall | 0.85 | 1.0 | PASS
 chain-inventedEdgeCount | 0 | 0 | PASS
-zero-false-clean-failed-detectors | 0 | 0 | PASS
+complete-baseline-is-clean | 0 | 0 | PASS
 zero-hidden-inventory-truncation | 0 | 0 | PASS
 dedup-source-conservation | 1.0 | 1.0 | PASS
 dedup-invalid-merges | 0 | 0 | PASS

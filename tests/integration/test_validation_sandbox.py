@@ -7,6 +7,7 @@ import time
 from copy import deepcopy
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import pytest
+from tests.support import make_link
 from hermes_security.errors import PolicyDenied
 from hermes_security.validation.policy import mint_grant
 from hermes_security.validation.runner import run_local,run_http,network_isolation_available
@@ -35,6 +36,7 @@ def test_disposable_paired_controls(tmp_path):
     assert any('network isolation:' in n for n in r['notes'])
     assert not list(tmp_path.glob('validation-*'))
 
+@pytest.mark.skipif(sys.platform == 'win32', reason='POSIX fork//proc variant; see test_timeout_kills_job_tree')
 def test_timeout_kills_process_group(tmp_path):
     import os
     target=tmp_path/'source';target.mkdir()
@@ -48,8 +50,49 @@ def test_timeout_kills_process_group(tmp_path):
         # Reparented dead children may remain zombies briefly until init reaps them.
         assert not status.exists() or status.read_text().split()[2]=='Z'
 
+@pytest.mark.skipif(sys.platform != 'win32', reason='Windows Job Object variant of test_timeout_kills_process_group')
+def test_timeout_kills_job_tree(tmp_path):
+    import ctypes
+    target=tmp_path/'source';target.mkdir()
+    # Parent spawns a grandchild, both report PIDs, then both sleep past the timeout.
+    code=('import subprocess,sys,os,time;'
+          'c=subprocess.Popen([sys.executable,"-c","import os,time;print(\\"PID=\\"+str(os.getpid()),flush=True);time.sleep(30)"]);'
+          'print("PID="+str(os.getpid()),flush=True);time.sleep(30)')
+    p=local_plan([[sys.executable,'-c',code],[sys.executable,'-c','print("SAFE")']]);p['timeoutS']=2
+    r=run_local(p,target=target,workdir_parent=tmp_path)
+    pids=[int(line[4:]) for line in r['outputExcerpt'].splitlines() if line.startswith('PID=')]
+    assert len(pids)==2 and r['positive']['timeout']
+    kernel32=ctypes.WinDLL('kernel32',use_last_error=True)
+    kernel32.OpenProcess.restype=ctypes.c_void_p
+    kernel32.OpenProcess.argtypes=[ctypes.c_ulong,ctypes.c_int,ctypes.c_ulong]
+    kernel32.GetExitCodeProcess.argtypes=[ctypes.c_void_p,ctypes.POINTER(ctypes.c_ulong)]
+    kernel32.CloseHandle.argtypes=[ctypes.c_void_p]
+    for pid in pids:
+        h=kernel32.OpenProcess(0x1000,False,pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+        if not h: continue  # already gone
+        code_=ctypes.c_ulong()
+        try:
+            assert kernel32.GetExitCodeProcess(h,ctypes.byref(code_))
+            assert code_.value!=259, f'pid {pid} still running'  # STILL_ACTIVE
+        finally: kernel32.CloseHandle(h)
+
+@pytest.mark.skipif(sys.platform != 'win32', reason='junctions are Windows-only')
+@pytest.mark.parametrize('form',['dangling','malformed'])
+def test_hostile_junction_escape_refused(tmp_path,form):
+    # A malformed junction (doubled \\?\ prefix) makes resolve() return the link's
+    # own path; the stored target must be checked too, failing closed.
+    import _winapi
+    target=tmp_path/'source';target.mkdir()
+    gone=tmp_path/'outside';gone.mkdir()
+    _winapi.CreateJunction(('\\\\?\\' if form=='malformed' else '')+str(gone),str(target/'escape'))
+    if form=='dangling': gone.rmdir()
+    else: assert (target/'escape').resolve()==target/'escape'  # the resolve() blind spot
+    p=local_plan([[sys.executable,'-c','print(1)']]*2)
+    with pytest.raises(PolicyDenied,match='symlink'): run_local(p,target=target,workdir_parent=tmp_path)
+    assert not list(tmp_path.glob('validation-*'))
+
 def test_symlink_refused(tmp_path):
-    target=tmp_path/'source';target.mkdir();(target/'escape').symlink_to(tmp_path)
+    target=tmp_path/'source';target.mkdir();make_link(target/'escape',tmp_path,directory=True)
     p=local_plan([[sys.executable,'-c','print(1)']]*2)
     with pytest.raises(PolicyDenied,match='symlink'): run_local(p,target=target,workdir_parent=tmp_path)
     assert not list(tmp_path.glob('validation-*'))

@@ -15,5 +15,5 @@
   "validation": {"status": "NOT_RUN", "level": "static", "receiptIds": [], "summary": "Inspected the route, query, and session check; no runtime request was sent."},
   "remediation": {"summary": "Bind the invoice query to the authenticated tenant and deny unmatched records.", "regressionTests": ["A member requesting another tenant's invoice receives a denial."]},
   "capabilities": {"preconditions": [], "effects": []}, "secret": null, "diffAttribution": null,
-  "provenance": {"methodologyVersion": "hermes-security/method-1", "workerAttemptIds": [], "sourceCandidateIds": [], "detectors": [], "supersedes": null}
+  "provenance": {"methodologyVersion": "hermes-security/method-1", "workerAttemptIds": [], "sourceCandidateIds": [], "supersedes": null}
 }

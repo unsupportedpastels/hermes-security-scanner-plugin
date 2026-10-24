@@ -24,7 +24,7 @@ Use the camelCase fields from `docs/CONTRACT.md`, not a parallel prose schema. F
 | `capabilities` | Preconditions/effects supported by the same-snapshot evidence and versioned vocabulary; no speculative graph edges. |
 | `secret` | Null, or type and fingerprint only; location is in locations. Never a literal value. |
 | `diffAttribution` | Null outside diff review; `introduced` or `inherited` based on changed behavior, not nearby lines. |
-| `provenance` | methodologyVersion, workerAttemptIds, sourceCandidateIds, detectors, and supersedes; preserve every source reference. |
+| `provenance` | methodologyVersion, workerAttemptIds, sourceCandidateIds, and supersedes; preserve every source reference. |
 
 The plugin computes candidate IDs, finding IDs, occurrence IDs, and fingerprints. Workers must not invent these. Candidate fields may be partial during discovery; reported findings require all completeness rules. Retain rejected and inconclusive candidates with reasons, not in the severity total for reportable findings.
 
@@ -34,7 +34,7 @@ Use path + line range + exact excerpt from the pinned snapshot. Include the actu
 
 Do not add ellipses or paraphrase code inside an exact excerpt. Paths must be inventory-relative, normalized, contained, and non-symlink. Line ranges must exist. Each `code` is at most 4000 characters. SHA-256 describes the exact retained excerpt bytes; use the plugin's redacted excerpt and matching fingerprint behavior for secret-bearing lines. Never serialize literal secrets or copy raw-secret hashes into ad hoc logs. If matching redacted evidence cannot be produced, preserve a gap; do not leak a value to satisfy citation checks.
 
-A high-confidence static finding still has runtime status NOT RUN. Runtime confirmation requires the plugin's passed receipt, permitted execution level, and paired controls; a suggested test or scanner label cannot promote evidence state.
+A high-confidence static finding still has runtime status NOT RUN. Runtime confirmation requires the plugin's passed receipt, permitted execution level, and paired controls; a suggested test cannot promote evidence state.
 
 ## Plain-language writing
 

@@ -10,12 +10,10 @@ from .errors import ValidationError
 from .tools import encode_result, error_envelope
 
 HELP = """/security status
-/security authorize-validation <scanId> <origin> [--actions http-probe] [--minutes 30] [--max-requests 20]
-/security revoke <grantId>
+/security authorize-validation <scanId> <origin>   let the scan test your running app (1 hour, 200 requests)
+/security revoke <grantId>                          stop app testing
 /security help
-Grants are limited to 240 minutes and 200 requests.
-Grants apply only to scans started with safety_level active-authorized.
-Local-safe validation requires a confirmed Desktop click or CLI: start --allow-local --safety-level local-safe, then validate --scan <scanId> --file <plans.json> --allow-local"""
+To scan, just ask: "scan this repo for security issues" (add "and run tests to confirm" to allow tests)."""
 
 
 class UsageError(ValidationError):
@@ -75,12 +73,12 @@ def _origin(text):
 
 
 def add_authorization_parser(subparsers):
-    parser = subparsers.add_parser("authorize-validation", help="Grant bounded validation consent")
+    parser = subparsers.add_parser("authorize-validation", help="Let a scan test your running app (default: 1 hour, 200 requests)")
     parser.add_argument("scan_id")
     parser.add_argument("origin", type=_origin)
     parser.add_argument("--actions", type=_actions, default=["http-probe"])
-    parser.add_argument("--minutes", type=bounded_int(240), default=30)
-    parser.add_argument("--max-requests", type=bounded_int(200), default=20)
+    parser.add_argument("--minutes", type=bounded_int(240), default=60)
+    parser.add_argument("--max-requests", type=bounded_int(200), default=200)
     revoke = subparsers.add_parser("revoke", help="Revoke a validation grant")
     revoke.add_argument("grant_id")
 

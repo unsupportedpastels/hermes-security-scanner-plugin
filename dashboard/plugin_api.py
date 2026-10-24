@@ -126,10 +126,8 @@ def start_scan(body: dict = Body(...)):
         opts['safety_level'] = opts.pop('safetyLevel')
     if {'user_authorized', 'authorization_source'} & opts.keys():
         raise ValidationError('authority fields are not request options')
-    confirmed = opts.pop('confirm', None)
-    authorize = opts.get('safety_level') == 'local-safe' and opts.get('allowLocalValidation') is True
-    if authorize and confirmed != 'local-safe':
-        return _consent_error()
+    opts.pop('confirm', None)  # legacy clients; the "run tests" checkbox is the consent
+    authorize = opts.get('allow_tests') is True or opts.get('allowLocalValidation') is True
     created = service.start_scan(**opts, user_authorized=authorize,
                                  authorization_source='dashboard' if authorize else None)
     result = service.get_scan(created['scanId'])
@@ -155,11 +153,9 @@ def authorize_validation(scan_id: str, body: dict = Body(...)):
     if body.get('confirm') != scan_id:
         return _consent_error()
     service = get_service()
-    if service.get_scan(scan_id)['safety_level'] != 'active-authorized':
-        return _level_error('active-authorized')
     if set(body) - {'confirm', 'origin', 'minutes', 'maxRequests'}:
         raise ValidationError('unknown authorization option')
-    minutes, cap = body.get('minutes', 30), body.get('maxRequests', 20)
+    minutes, cap = body.get('minutes', 60), body.get('maxRequests', 200)
     if type(minutes) is not int or not 1 <= minutes <= 240 or type(cap) is not int or not 1 <= cap <= 200:
         raise ValidationError('invalid grant limits')
     # Share CLI origin syntax: do not silently discard paths or credentials.
@@ -193,7 +189,7 @@ def run_validation(scan_id: str, body: dict = Body(...)):
     if body.get('confirm') != scan_id:
         return _consent_error()
     service = get_service()
-    if service.get_scan(scan_id)['safety_level'] != 'local-safe':
+    if service.get_scan(scan_id)['safety_level'] == 'static':
         return _level_error('local-safe')
     plans = body.get('plans')
     if (set(body) != {'confirm', 'plans'} or not isinstance(plans, list) or not plans or
@@ -229,6 +225,30 @@ def resume(scan_id: str):
     return result
 
 
+@router.post('/scans/{scan_id}/session')
+def link_session(scan_id: str, body: dict = Body(...)):
+    if set(body) - {'sessionId', 'storedSessionId'} or not isinstance(body.get('sessionId'), str):
+        raise ValidationError('sessionId is required')
+    result = get_service().link_session(scan_id, body['sessionId'], body.get('storedSessionId'))
+    _broadcast('scan.updated', {'scanId': scan_id})
+    return result
+
+
+@router.get('/folders')
+def folders(path: str = Query(..., min_length=1, max_length=4096)):
+    """Top-level folders of a repository, for the "Scan area" picker."""
+    root = Path(path).expanduser()
+    if not root.is_dir():
+        raise ValidationError('folder not found')
+    skip = {'.git', 'node_modules', '__pycache__', '.venv', 'venv', 'dist', 'build', 'target', '.next'}
+    try:
+        names = sorted(p.name for p in root.iterdir()
+                       if p.is_dir() and not p.is_symlink() and p.name not in skip and not p.name.startswith('.'))
+    except OSError:
+        raise ValidationError('folder cannot be read') from None
+    return {'root': str(root.resolve()), 'items': names[:500]}
+
+
 @router.get('/scans/{scan_id}/activity')
 def activity(scan_id: str, after_id: int = Query(0, ge=0), limit: int = Query(200, ge=0, le=500)):
     return get_service().activity(scan_id, after_id=after_id, limit=limit)
@@ -242,11 +262,11 @@ def coverage(scan_id: str):
 @router.get('/findings')
 def findings(q: str | None = None, status: str | None = None, severity: str | None = None,
              evidenceState: str | None = None, validationLevel: str | None = None,
-             repo: str | None = None, owasp: str | None = None, source: str | None = None,
+             repo: str | None = None, owasp: str | None = None,
              chained: bool | None = None, limit: int = Query(50, ge=0, le=100), offset: int = Query(0, ge=0)):
     return get_service().workbench_findings(q=q, triage=status, severity=severity,
         evidence_state=evidenceState, validation_level=validationLevel, repo_key=repo,
-        owasp=owasp, source=source, chained=chained, limit=limit, offset=offset)
+        owasp=owasp, chained=chained, limit=limit, offset=offset)
 
 
 @router.get('/findings/{finding_id}')

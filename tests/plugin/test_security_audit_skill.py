@@ -83,7 +83,7 @@ def test_all_public_tool_names_are_contract_names():
     contract = text("docs/CONTRACT.md")
     public = contract.split("Agent tools (toolset", 1)[1].split("Slash command", 1)[0]
     expected = set(re.findall(r"\bsecurity_scan_[a-z_]+\b", public))
-    assert len(expected) == 10
+    assert len(expected) == 9
     found = set()
     for directory in (ROOT / "skills", ROOT / "references"):
         for path in directory.rglob("*.md"):
@@ -150,7 +150,7 @@ def test_all_lanes_have_named_review_work_and_coverage_states():
     for state in ("reviewed", "not_applicable", "deferred", "unsupported", "unknown", "failed"):
         assert state in worker
     for phrase in ("parent-router", "actual consumer", "source", "counterevidence",
-                   "inner executable", "truncation", "configuration"):
+                   "truncation", "configuration"):
         assert phrase in core
 
 

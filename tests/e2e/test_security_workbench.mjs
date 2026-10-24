@@ -57,7 +57,7 @@ const sdkModule = uri(`
 const e=globalThis.__securityTest;
 export const Button='button', Input='input', Textarea='textarea', Dialog='dialog', DialogContent='div', DialogHeader='header', DialogTitle='h2', DialogDescription='p', DialogFooter='footer';
 export const ROUTES_AREA='routes', SIDEBAR_NAV_AREA='sidebar.nav', PALETTE_AREA='palette';
-export const host={state:{profile:{get:()=>e.profile},connectionId:{get:()=>e.connectionId||null},focusedSessionOwner:{get:()=>e.owner||null},focusedStoredSessionId:{get:()=>null},activeSessionId:{get:()=>null}},notify:v=>e.notice=v,navigate:p=>e.navigation=p,openSession:async id=>e.session=id,composer:{insertText:async (id,text,options)=>{e.draft={id,text,options};return e.draftReady}}};
+export const host={state:{profile:{get:()=>e.profile},connectionId:{get:()=>e.connectionId||null},focusedSessionOwner:{get:()=>e.owner||null},focusedStoredSessionId:{get:()=>null},activeSessionId:{get:()=>null}},notify:v=>e.notice=v,navigate:p=>e.navigation=p,openSession:async id=>e.session=id,request:async (method,params)=>{(e.rpc=e.rpc||[]).push([method,params]);if(e.noSessions)throw new Error('unsupported');return method==='session.create'?{session_id:'rt_1',stored_session_id:'st_1'}:{}},onEvent:(type,fn)=>{e.gatewayListener=fn;return ()=>{}},composer:{insertText:async (id,text,options)=>{e.draft={id,text,options};return e.draftReady}}};
 export const queryClient={invalidateQueries:async v=>e.invalidations.push(v),removeQueries:v=>e.removed=v};
 export const useValue=atom=>atom.get();
 export const useQuery=options=>{e.queryOptions.push(options);return {data:options.enabled === false ? undefined : e.fixtures[options.queryKey[2]+'#'+(new URLSearchParams(options.queryKey[3]).get('section')||'')] || e.fixtures[options.queryKey[2]],isLoading:false,refetch:()=>options.queryFn()}};
@@ -79,6 +79,8 @@ const context = {
     if (env.error) throw env.error
     if (env.response !== undefined) return env.response
     if (options.method === 'POST') {
+      if (path === '/scans') return { scanId: 'scan_new', status: 'awaiting_analysis', target: { root: options.body.path } }
+      if (path.endsWith('/session')) return { scanId: path.split('/')[2], options: { session: options.body } }
       if (path.endsWith('/cancel')) env.fixtures['/scans/scan_test'].status = 'canceled'
       if (path.endsWith('/resume')) env.fixtures['/scans/scan_test'].status = 'awaiting_analysis'
       if (path.endsWith('/triage')) env.fixtures['/findings/hsf_test'].triage = { ...options.body }
@@ -96,16 +98,16 @@ function render(node) {
   return render(node.props?.children)
 }
 
-test('validation controls expose level-specific consent and grant state', () => {
+test('validation controls explain tests and offer optional app testing on open scans', () => {
   const local = render(plugin.ValidationControls({ id: 'scan_test', scan: { safetyLevel: 'local-safe', status: 'awaiting_analysis' } }))
-  assert.match(local, /Test the bugs on this computer/)
-  assert.match(local, /does not protect your other files/)
-  assert.doesNotMatch(local, /Allow testing my running app/)
-  const active = render(plugin.ValidationControls({ id: 'scan_test', scan: { safetyLevel: 'active-authorized', status: 'awaiting_analysis' } }))
-  assert.match(active, /Allow testing my running app/)
-  assert.doesNotMatch(active, /Test the bugs on this computer/)
-  const staticView = render(plugin.ValidationControls({ id: 'scan_test', scan: { safetyLevel: 'static' } }))
-  assert.doesNotMatch(staticView, /Allow testing my running app|Test the bugs on this computer/)
+  assert.match(local, /runs small tests from this repo/)
+  assert.match(local, /Allow testing this app/)
+  assert.doesNotMatch(local, /paste/i)
+  const staticView = render(plugin.ValidationControls({ id: 'scan_test', scan: { safetyLevel: 'static', status: 'awaiting_analysis' } }))
+  assert.match(staticView, /Run tests to confirm findings/)
+  assert.match(staticView, /Allow testing this app/)
+  const sealed = render(plugin.ValidationControls({ id: 'scan_test', scan: { safetyLevel: 'local-safe', status: 'completed', sealedAt: 'x' } }))
+  assert.doesNotMatch(sealed, /Allow testing this app/)
 })
 
 test('validation click cancellation sends nothing; accepted click sends exact scan confirmation', async () => {
@@ -129,49 +131,57 @@ function nodes(node) {
   return [node, ...nodes(node.props?.children)]
 }
 
-test('start form uses plain choices and gates direct scan creation on checked consent', async () => {
-  for (const level of ['local-safe', 'active-authorized']) {
-    const options = { path: '/remote/repo', mode: 'standard', safetyLevel: level, scope: '', detectors: 'builtin-secrets', workers: '3', budget: '30', context: '', base: '', head: '' }
-    const before = env.calls.length
-    env.states = [options, null, false, false]
-    let view = nodes(plugin.NewScan({ open: true, onClose() {} }))
-    assert.ok(view.some((n) => n.type === 'input' && n.props.type === 'checkbox' && n.props.checked === false))
-    for (const label of ['Just read the code (safest)', 'Read the code and test bugs on this computer', 'Read the code and test my running app'])
-      assert.ok(view.some((n) => n.type === 'option' && n.props.children === label))
-    let start = view.find((n) => n.type === 'button' && n.props.children === 'Create scan')
-    assert.equal(start.props.disabled, true)
-    await start.props.onClick()
-    assert.equal(env.calls.length, before)
-    let created
-    env.states = [options, null, false, true]
-    env.response = { scanId: 'scan_created', status: 'awaiting_analysis' }
-    view = nodes(plugin.NewScan({ open: true, onClose() {}, onCreated: (id) => { created = id } }))
-    start = view.find((n) => n.type === 'button' && n.props.children === 'Create scan')
+test('start form matches the simple flow and launches the scan in a background chat', async () => {
+  env.fixtures['/repositories'] = { items: [{ repoKey: 'r1', root: '/remote/repo' }], total: 1 }
+  env.fixtures['/folders'] = { root: '/remote/repo', items: ['src', 'tests'] }
+  const view = nodes(plugin.NewScan({ onClose() {} }))
+  assert.deepEqual(view.filter((n) => n.type === 'button' && n.props['aria-pressed'] !== undefined).map((n) => n.props.children), ['Whole codebase', 'Only my changes'])
+  assert.deepEqual(view.filter((n) => n.type === 'option').map((n) => n.props.children), ['repo', 'Other folder…', 'Entire codebase', 'src/', 'tests/'])
+  const text = render(plugin.NewScan({ onClose() {} }))
+  for (const gone of [/Worker/, /Budget/, /Detectors/, /revision/i, /safety/i]) assert.doesNotMatch(text, gone)
+  for (const shown of [/Deep scan/, /Run tests to confirm findings/, /Additional context/, /Scan area/]) assert.match(text, shown)
+  for (const [options, expected] of [
+    [{ path: '/remote/repo', otherPath: '', changes: false, deep: false, tests: false, folder: '', context: '  ' }, { path: '/remote/repo', mode: 'standard' }],
+    [{ path: '__other', otherPath: ' /other/app ', changes: false, deep: true, tests: true, folder: 'src', context: ' Billing app ' },
+     { path: '/other/app', mode: 'deep', scope: ['src/**'], allow_tests: true, context: 'Billing app' }],
+    [{ path: '/remote/repo', otherPath: '', changes: true, deep: true, tests: false, folder: 'src', context: '' }, { path: '/remote/repo', mode: 'diff' }]
+  ]) {
+    env.states = [options, null, false]
+    env.rpc = []
+    let started
+    const start = nodes(plugin.NewScan({ onClose() {}, onStarted: (id) => { started = id } })).find((n) => n.type === 'button' && n.props.children === 'Start scan')
     assert.equal(start.props.disabled, false)
     await start.props.onClick()
-    assert.equal(created, 'scan_created')
-    assert.equal(env.calls.at(-1).path, '/scans')
-    assert.equal(env.calls.at(-1).options.body.safetyLevel, level)
-    assert.equal(env.calls.at(-1).options.body.confirm, level === 'local-safe' ? 'local-safe' : undefined)
-    delete env.response
+    const create = env.calls.filter((c) => c.path === '/scans').at(-1)
+    assert.deepEqual(create.options.body, expected)
+    assert.equal(started, 'scan_new')
+    assert.deepEqual(env.rpc.map(([m]) => m), ['session.create', 'prompt.submit'])
+    assert.match(env.rpc[1][1].text, /scan_new/)
+    assert.deepEqual(env.calls.at(-1).options.body, { sessionId: 'rt_1', storedSessionId: 'st_1' })
     delete env.states
   }
+  env.noSessions = true
+  env.states = [{ path: '/remote/repo', otherPath: '', changes: false, deep: false, tests: false, folder: '', context: '' }, null, false]
+  await nodes(plugin.NewScan({})).find((n) => n.type === 'button' && n.props.children === 'Start scan').props.onClick()
+  assert.match(env.draft.text, /hermes-security:security-audit.*scan_new/)
+  delete env.noSessions
+  delete env.states
 })
 
-test('app permission stop and local test buttons ask before sending requests', async () => {
+test('app permission allow and stop buttons ask before sending requests', async () => {
   env.fixtures['/scans/scan_test/grants'] = { items: [{ grantId: 'grt_test', scanId: 'scan_test', origins: ['http://localhost:8000'], used: 0, maxRequests: 2, expiresAt: '2099-01-01T00:00:00Z' }] }
   globalThis.window = { confirm: () => false }
   for (const level of ['local-safe', 'active-authorized']) {
-    env.states = [0, 'http://localhost:8000', '30', '2', '[]', null, false, null]
+    env.states = [0, 'http://localhost:8000', null, false, null]
     const view = nodes(plugin.ValidationControls({ id: 'scan_test', scan: { safetyLevel: level, status: 'awaiting_analysis' } }))
-    for (const button of view.filter((n) => n.type === 'button' && ['Test the bugs on this computer', 'Allow testing my running app', 'Stop allowing app testing'].includes(n.props.children))) {
+    const buttons = view.filter((n) => n.type === 'button' && ['Allow testing this app', 'Stop'].includes(n.props.children))
+    assert.equal(buttons.length, 2)
+    for (const button of buttons) {
       const before = env.calls.length
       await button.props.onClick()
       assert.equal(env.calls.length, before)
       window.confirm = () => true
-      env.response = button.props.children === 'Test the bugs on this computer'
-        ? { scanId: 'scan_test', receipts: [] }
-        : { scanId: 'scan_test', grantId: 'grt_test', revoked: button.props.children === 'Stop allowing app testing' }
+      env.response = { scanId: 'scan_test', grantId: 'grt_test', revoked: button.props.children === 'Stop' }
       await button.props.onClick()
       assert.ok(env.calls.slice(before).some((call) => call.options?.body?.confirm === 'scan_test'))
       window.confirm = () => false
@@ -185,16 +195,16 @@ test('app permission stop and local test buttons ask before sending requests', a
 
 test('test results and app permission state use everyday language', () => {
   env.fixtures['/scans/scan_test#validations'] = { items: [{ candidateId: 'cand_test', receiptId: 'vrc_test', status: 'passed', outputExcerpt: 'Observed output', cleanup: { done: true } }], total: 1 }
-  for (const [grant, expected] of [
-    [{ expiresAt: '2099-01-01T00:00:00Z', used: 0, maxRequests: 2 }, 'allowed'],
-    [{ expiresAt: '2000-01-01T00:00:00Z', used: 0, maxRequests: 2 }, 'not allowed'],
-    [{ expiresAt: '2099-01-01T00:00:00Z', used: 2, maxRequests: 2 }, 'not allowed'],
-    [{ expiresAt: '2099-01-01T00:00:00Z', used: 0, maxRequests: 2, revoked: true }, 'not allowed']
+  for (const [grant, shown] of [
+    [{ expiresAt: '2099-01-01T00:00:00Z', used: 0, maxRequests: 2 }, true],
+    [{ expiresAt: '2000-01-01T00:00:00Z', used: 0, maxRequests: 2 }, false],
+    [{ expiresAt: '2099-01-01T00:00:00Z', used: 2, maxRequests: 2 }, false],
+    [{ expiresAt: '2099-01-01T00:00:00Z', used: 0, maxRequests: 2, revoked: true }, false]
   ]) {
     env.fixtures['/scans/scan_test/grants'] = { items: [{ grantId: 'grt_test', origins: ['http://localhost:8000'], ...grant }] }
-    const output = render(plugin.ValidationControls({ id: 'scan_test', scan: { safetyLevel: 'active-authorized', status: 'awaiting_analysis' } }))
-    assert.ok(output.includes(`App testing: ${expected}`))
-    assert.match(output, /Test results.*Bug confirmed by test.*Observed output.*Cleanup: done/)
+    const output = render(plugin.ValidationControls({ id: 'scan_test', scan: { safetyLevel: 'local-safe', status: 'awaiting_analysis' } }))
+    assert.equal(output.includes('requests used'), shown)
+    assert.match(output, /1 test results.*Confirmed by test.*Observed output/)
     assert.doesNotMatch(output.replace(/https?:\/\/[^\s,)]+/g, ''), /\b(grant|receipt|validation|probe|authorize|HTTP)\b/i)
   }
   delete env.fixtures['/scans/scan_test#validations']
@@ -333,9 +343,8 @@ test('high confidence without excerpt has warning and proof-gap explanation', ()
   const output = render(
     plugin.Evidence({ finding: { confidence: { level: 'high' }, validation: { status: 'NOT_RUN' } } })
   )
-  assert.match(output, /Evidence warning/)
-  assert.match(output, /No proof-gap explanation recorded/)
-  assert.match(output, /NOT RUN/)
+  assert.match(output, /High confidence was recorded without a code excerpt/)
+  assert.match(output, /Not tested: supported by reading the code/)
 })
 test('secret evidence renders only type and fingerprint, never raw excerpt', () => {
   const output = render(
@@ -392,17 +401,26 @@ test('long gap lists collapse behind a count but stay readable', () => {
 })
 test('progress never invents completion and mounts aria-live stepper', () => {
   const node = plugin.Progress({ scan: {} })
-  assert.match(render(node), /Inventory — Not recorded/)
-  assert.match(render(node), /Finalization — Not recorded/)
-  assert.equal(node.props.children[0].props['aria-live'], 'polite')
+  assert.equal(node.props['aria-live'], 'polite')
+  assert.ok(node.props.children.every((li) => li.props['data-state'] === 'pending'))
+  assert.match(render(node), /Prepare.*Review.*Verify.*Report/)
+  const live = plugin.Progress({ scan: { progress: { steps: [{ label: 'Preparing scan', state: 'done' }, { label: 'Building threat model', state: 'done' }, { label: 'Reviewing code', state: 'active' }] } } })
+  assert.deepEqual(live.props.children.map((li) => li.props['data-state']), ['done', 'active', 'pending', 'pending'])
+  assert.match(render(live), /Reviewing code/)
+  const half = plugin.stages([{ label: 'Validating findings', state: 'done' }, { label: 'Tracing attack paths', state: 'pending' }])
+  assert.equal(half[2].state, 'active')
+  const unknown = plugin.stages([{ label: 'Something new', state: 'active' }])
+  assert.deepEqual(unknown, [{ name: 'Something new', state: 'active' }])
 })
 test('full page evaluates through SDK React shim and uses six-second queries', () => {
+  env.states = ['Scans', null, false, {}]
   const output = render(plugin.SecurityPage())
-  assert.match(output, /Security/)
-  assert.match(output, /remote-profile/)
-  assert.match(output, /\/remote\/project/)
+  delete env.states
+  for (const tab of ['Scans', 'Findings', 'New scan']) assert.match(output, new RegExp(tab))
+  assert.doesNotMatch(output, /Repositories/)
+  assert.match(output, /project/)
   for (const q of env.queryOptions) assert.equal(q.refetchInterval, 6000)
-  assert.ok(env.queryOptions.some((q) => q.queryKey[2] === '/summary'))
+  assert.ok(env.queryOptions.some((q) => q.queryKey[2] === '/scans'))
 })
 test('legacy store projections normalize metadata without rewriting evidence', async () => {
   env.response = {
@@ -452,10 +470,11 @@ test('completed scan uses sealed manifest counts beside coverage', () => {
   env.fixtures['/scans/scan_done/coverage'] = { completeness: 'partial', gaps: ['Review worker missing'] }
   env.fixtures['/scans/scan_done#findings'] = { items: [], total: 0 }
   const output = render(plugin.ScanDetail({ id: 'scan_done', onBack() {}, onFinding() {} }))
-  assert.match(output, /2 high/)
-  assert.match(output, /1 chains/)
+  assert.match(output, /2 high · 1 medium/)
+  assert.match(output, /Deep scan|Scan/)
   assert.match(output, /Review worker missing/)
   assert.match(output, /fixture-model/)
+  assert.match(output, /Run in chat/)
 })
 test('all finding tabs and repository metadata render without missing SDK references', () => {
   env.fixtures['/findings/hsf_test'] = {
@@ -467,31 +486,19 @@ test('all finding tabs and repository metadata render without missing SDK refere
     confidence: { level: 'high' },
     validation: { status: 'NOT_RUN' }
   }
-  for (const tab of ['Summary', 'Evidence', 'Chains', 'Patch']) {
-    env.states = [tab, 'open', '']
-    const output = render(plugin.FindingDetail({ id: 'hsf_test', onBack() {} }))
-    assert.match(output, /Test finding/)
-    if (tab === 'Summary') assert.match(output, /Missing guard/)
-    if (tab === 'Evidence') assert.match(output, /NOT RUN/)
-    if (tab === 'Patch') assert.match(output, /Add an ownership check/)
-  }
+  env.states = ['', null]
+  const output = render(plugin.FindingDetail({ id: 'hsf_test', onBack() {} }))
+  assert.match(output, /Test finding/)
+  assert.match(output, /Missing guard/)
+  assert.match(output, /Not tested/)
+  assert.match(output, /Add an ownership check/)
+  assert.match(output, /Fix in chat/)
   env.states = []
-  env.fixtures['/repositories'] = {
-    items: [
-      plugin.normalizeResponse({
-        root: '/remote/repo',
-        last_scan_id: 'scan_done',
-        snapshot_digest: 'sha256:exact',
-        unresolved_count: 3,
-        coverage_completeness: 'partial'
-      })
-    ],
-    total: 1
-  }
-  const output = render(plugin.Repositories({ onScan() {} }))
-  assert.match(output, /scan_done/)
-  assert.match(output, /sha256:exact/)
-  assert.match(output, /Unresolved findings: 3/)
+  const page = render(plugin.BrowserView({ kind: 'Findings', selected: null, setSelected() {}, onFinding: {}, newScan: false, setNewScan() {} }))
+  assert.match(page, /A member reads another tenant invoice/)
+  assert.match(page, /high/)
+  assert.match(page, /Any severity/)
+  assert.ok(env.queryOptions.some((q) => q.queryKey[2] === '/findings' && new URLSearchParams(q.queryKey[3]).get('status') === 'open'))
 })
 test('page owner and queries distinguish same-named remote profiles', async () => {
   env.connectionId = 'remote-a'
@@ -514,19 +521,17 @@ test('draft refuses a chat belonging to another backend and reports failure afte
   assert.equal(env.notice.kind, 'error')
   env.owner = null
 })
-test('all export formats render the SDK JSON-envelope content', async () => {
+test('every export format downloads the backend content with its filename', async () => {
+  const saved = []
+  globalThis.document = { createElement: () => ({ click() { saved.push([this.download, this.href]) } }) }
   for (const format of ['md', 'sarif', 'json', 'csv']) {
-    const path = `/exports/scan_done/${format}`
-    env.fixtures[path] = {
-      content: `fixture-${format}`,
-      contentType: 'text/plain',
-      filename: `scan.${format}`
-    }
-    env.states = [format, true]
-    assert.match(render(plugin.ExportPanel({ id: 'scan_done' })), new RegExp(`fixture-${format}`))
-    assert.equal((await plugin.request(path)).filename, `scan.${format}`)
+    env.fixtures[`/exports/scan_done/${format}`] = { content: `fixture-${format}`, contentType: 'text/plain', filename: `scan.${format}` }
+    assert.equal(await plugin.downloadExport('scan_done', format), `scan.${format}`)
   }
-  env.states = []
+  assert.deepEqual(saved.map(([name]) => name), ['scan.md', 'scan.sarif', 'scan.json', 'scan.csv'])
+  assert.ok(saved.every(([, href]) => href.startsWith('blob:')))
+  assert.match(render(plugin.ExportPanel({ id: 'scan_done' })), /Report \(Markdown\).*SARIF/)
+  delete globalThis.document
 })
 test('finding readback keeps the finding when it embeds scan metadata', () => {
   const row = {

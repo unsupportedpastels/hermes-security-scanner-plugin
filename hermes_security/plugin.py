@@ -32,8 +32,8 @@ def register(ctx):
         ctx.register_tool(name=schema["name"], toolset="security", schema=schema,
                           handler=tools.make_handler(schema["name"], service_factory))
     ctx.register_command("security", commands.make_command(service_factory),
-                         description="Review status and user-controlled validation consent",
-                         args_hint="status | authorize-validation | revoke | allow-local | help")
+                         description="Security scan status and letting a scan test your running app",
+                         args_hint="status | authorize-validation | revoke | help")
     if callable(getattr(ctx, "register_cli_command", None)):
         def cli_handler(args):
             # Hermes main.py propagates an integer func(args) return code.

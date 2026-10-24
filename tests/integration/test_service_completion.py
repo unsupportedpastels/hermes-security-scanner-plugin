@@ -118,10 +118,3 @@ def test_resume_reissues_canceled_deep_attempt(tmp_path):
     assert replacement['attemptId'] != packet['attemptId']
     payload = worker(plan, [], role='deep-pass', attempt=replacement['attemptId']); payload['packetId'] = packet['packetId']
     assert service.submit_worker_result(payload)['inserted'] == 0
-
-
-def test_semgrep_rules_are_local_only(tmp_path):
-    root, service, plan = setup(tmp_path)
-    with pytest.raises(ValidationError): service.start_scan(path=str(root), semgrep_config='p/owasp-top-ten')
-    rules = tmp_path / 'rules.yml'; rules.write_text('rules: []\n')
-    assert service.start_scan(path=str(root), semgrep_config=str(rules))['scanId']

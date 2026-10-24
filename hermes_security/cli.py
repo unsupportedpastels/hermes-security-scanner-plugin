@@ -21,15 +21,19 @@ def setup_parser(parser):
     subs = parser.add_subparsers(dest="security_command", required=True,
                                 parser_class=(JsonArgumentParser if isinstance(parser, JsonArgumentParser)
                                               else argparse.ArgumentParser))
-    start = subs.add_parser("start", help="Snapshot a local repository for static review")
+    start = subs.add_parser("start", help="Start a security scan of a local repository")
     start.add_argument("--path", required=True)
-    start.add_argument("--mode", choices=["standard", "deep", "diff"], default="standard")
-    start.add_argument("--safety-level", choices=["static", "local-safe", "active-authorized"], default="static")
-    start.add_argument("--scope", action="append")
-    start.add_argument("--base")
-    start.add_argument("--head")
-    start.add_argument("--allow-local", action="store_true", help="Opt this scan in to local-safe validation")
-    for command in ("get", "submit", "checkpoint", "detectors", "validate", "chains", "finalize", "cancel", "resume", "export"):
+    start.add_argument("--mode", choices=["standard", "deep", "diff"], default="standard",
+                       help="standard = full codebase, diff = recent changes, deep = more thorough")
+    start.add_argument("--tests", dest="allow_tests", action="store_true", help="Run tests to confirm findings")
+    start.add_argument("--context", help="Optional extra context for the reviewer")
+    start.add_argument("--scope", action="append", help="Only scan this folder/glob (repeatable)")
+    # Advanced/legacy options.
+    start.add_argument("--safety-level", choices=["static", "local-safe", "active-authorized"], default=None, help=argparse.SUPPRESS)
+    start.add_argument("--base", help=argparse.SUPPRESS)
+    start.add_argument("--head", help=argparse.SUPPRESS)
+    start.add_argument("--allow-local", action="store_true", help=argparse.SUPPRESS)
+    for command in ("get", "submit", "checkpoint", "validate", "chains", "finalize", "cancel", "resume", "export"):
         p = subs.add_parser(command)
         p.add_argument("--scan", dest="scan_id", required=True)
         if command in {"submit", "checkpoint", "validate"}:
@@ -37,10 +41,6 @@ def setup_parser(parser):
         if command == "get":
             p.add_argument("--section")
             _pagination(p)
-        elif command == "detectors":
-            p.add_argument("--run", action="store_true")
-            p.add_argument("--sarif", dest="sarif_path")
-            p.add_argument("--detector")
         elif command == "validate":
             p.add_argument("--allow-local", action="store_true")
         elif command == "chains":
@@ -125,8 +125,10 @@ def _execute(args, service_factory):
         explanations = _object(read_json_file(args.explanations))
     service = service_factory()
     if command == "start":
-        opts = {key: getattr(args, key) for key in ("path", "mode", "safety_level", "scope", "base", "head")
+        opts = {key: getattr(args, key) for key in ("path", "mode", "safety_level", "scope", "base", "head", "context")
                 if getattr(args, key) is not None}
+        if args.allow_tests:
+            opts["allow_tests"] = True
         if args.allow_local:
             opts["allowLocalValidation"] = True
         return service.start_scan(**opts)
@@ -136,8 +138,6 @@ def _execute(args, service_factory):
         return service.submit_worker_result(payload)
     if command == "checkpoint":
         return service.checkpoint(args.scan_id, **payload)
-    if command == "detectors":
-        return service.import_detector_results(args.scan_id, detector=args.detector, sarif_path=args.sarif_path, run=args.run)
     if command == "validate":
         return service.record_validations(args.scan_id, **payload, user_authorized=args.allow_local)
     if command == "chains":

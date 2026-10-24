@@ -19,6 +19,7 @@ def resolve_data_dir(ctx=None):
     try:
         from hermes_cli.plugins_state import PluginState
     except ImportError:
-        home = Path(os.environ.get('HERMES_HOME', str(Path.home() / '.hermes'))).expanduser()
+        default = Path(os.environ['LOCALAPPDATA']) / 'hermes' if os.name == 'nt' and os.environ.get('LOCALAPPDATA') else Path.home() / '.hermes'
+        home = Path(os.environ.get('HERMES_HOME', str(default))).expanduser()
         return home / 'plugin-data' / data_namespace()
     return Path(PluginState(PLUGIN_ID).data_dir)

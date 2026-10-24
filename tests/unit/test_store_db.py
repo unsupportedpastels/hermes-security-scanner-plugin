@@ -120,9 +120,6 @@ def test_misc_records_and_seal(tmp_path):
     s.record_coverage(a, [{"unitId": "file:a.py", "state": "deferred"}], source="att_a")
     assert len(s.coverage_units(a)) == 1
     assert s.coverage_units(a)[0]["state"] == "deferred"
-    r = {"receiptId": "d", "detector": "test", "status": "ok"}
-    assert s.record_detector_run(a, r) == r
-    assert s.detector_runs(a) == [r]
     v = {"receiptId": "v", "candidateId": "c", "status": "passed"}
     assert s.record_validation(a, v) == v
     assert s.validations(a, "c") == [v]
@@ -147,7 +144,6 @@ def test_misc_records_and_seal(tmp_path):
         lambda: s.upsert_candidates(a, "att_a", []),
         lambda: s.set_candidate_state(a, "c", "candidate", reason="x"),
         lambda: s.record_coverage(a, [], source="x"),
-        lambda: s.record_detector_run(a, r),
         lambda: s.record_validation(a, v),
         lambda: s.record_chains(a, doc),
         lambda: s.upsert_finding_index(a, []),
@@ -178,7 +174,7 @@ def finding(i):
         "evidenceState": "source_supported",
         "locations": [{"path": "a.py"}],
         "taxonomy": {"category": "auth", "cwe": ["CWE-639"], "owasp": ["A01:2025"]},
-        "provenance": {"detectors": ["test"]},
+        "provenance": {},
         "codeEvidence": [{"code": "BIG EVIDENCE"}],
     }
 
@@ -195,7 +191,6 @@ def test_finding_index_and_triage(tmp_path):
         evidence_state="source_supported",
         repo_key="repo",
         owasp="A01:2025",
-        detector="test",
         chained=False,
         scan_id=a,
         limit=1,
