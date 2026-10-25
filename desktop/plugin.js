@@ -259,7 +259,8 @@ const CSS = `
 .hs-state{flex:none;display:inline-flex;align-items:center;gap:5px;color:var(--ui-text-secondary)}
 .hs-state i{width:7px;height:7px;border-radius:50%;background:var(--ui-text-tertiary)}.hs-state[data-state=done] i{background:var(--hs-ok)}.hs-state[data-state=stopped] i{background:var(--hs-high)}
 .hs-state[data-state=running] i{background:var(--ui-accent);animation:hs-pulse 1.2s ease-in-out infinite}
-.hs-state[data-state=paused] i{background:var(--hs-medium)}
+.hs-state[data-state=paused] i,.hs-state[data-state=stalled] i{background:var(--hs-medium)}
+.hs-now[data-state=stalled]{color:var(--foreground)}.hs-now[data-state=stalled] svg{color:var(--hs-medium)}.hs-now[data-state=stalled] small{flex:none;color:var(--ui-text-tertiary)}
 @keyframes hs-pulse{50%{opacity:.25}}
 .hs-nums{display:inline-flex;gap:8px}.hs-nums span{color:var(--hs-sev)}
 .hs-detail{flex:1;min-width:0;overflow:auto;padding:22px 28px}.hs-detail>.hs-empty{height:100%}
@@ -318,6 +319,7 @@ const ICON_SHAPES = {
   note: [['path', { d: 'M12 20h9' }], ['path', { d: 'M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z' }]],
   tool: [['path', { d: 'M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94z' }]],
   chat: [['path', { d: 'M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z' }]],
+  alert: [['circle', { cx: 12, cy: 12, r: 10 }], ['path', { d: 'M12 8v4M12 16h.01' }]],
   flask: [['path', { d: 'M10 2v7.31M14 9.3V2M8.5 2h7M14 9.3a6.5 6.5 0 1 1-4 0M5.52 16h12.96' }]]
 }
 export function Icon({ name, className }) {
@@ -408,6 +410,8 @@ function SevBadge({ level }) {
 const pausedWhy = (row) => (!row.sealedAt && /^paused: /.test(row.reason || '') ? row.reason.slice(8) : null)
 function scanState(row) {
   if (RUNNING.includes(row.status) && pausedWhy(row)) return ['paused', `Paused — ${pausedWhy(row)}`]
+  // The plugin derives `stall` on every read: work is due but nothing has moved, or the agent gave up.
+  if (RUNNING.includes(row.status) && row.stall) return ['stalled', 'Stalled']
   if (RUNNING.includes(row.status)) return ['running', 'Running']
   if (STOPPED.includes(row.status)) return ['stopped', row.status === 'failed' ? 'Failed' : 'Stopped']
   return ['done', row.status === 'partial' ? 'Done, partly reviewed' : 'Done']
@@ -705,6 +709,15 @@ export function ChatActivity({ sessionId, onOpen }) {
     onOpen ? jsx('button', { type: 'button', className: 'hs-link', onClick: onOpen, children: 'Open chat' }) : null
   ] })
 }
+// Shown instead of live chat activity when the scan has stopped moving.
+export function StallNotice({ stall, onContinue }) {
+  return jsxs('div', { className: 'hs-now', 'data-state': 'stalled', role: 'status', children: [
+    jsx(Icon, { name: 'alert' }),
+    jsx('span', { title: stall.why, children: stall.why }),
+    jsx('small', { children: `Last progress ${age(stall.since)}` }),
+    onContinue ? jsx('button', { type: 'button', className: 'hs-link', onClick: onContinue, children: 'Continue' }) : null
+  ] })
+}
 const LOCAL_WARNING = 'The agent runs small tests from this repo on this computer (in a temporary copy) to check whether findings are real. Only enable this for code you trust.'
 const APP_WARNING = 'Only add an app you own or are allowed to test. The agent may send up to 200 test requests to that address over the next hour; redirects to other sites are never followed.'
 
@@ -867,7 +880,8 @@ export function ScanDetail({ id, onBack, onFinding }) {
       ] }),
       // A finished scan without recorded steps has nothing honest to draw.
       list(scan.progress?.steps).length || !finished ? jsx(Progress, { scan }) : null,
-      active ? jsx(ChatActivity, { sessionId: session?.sessionId, onOpen: session ? openChat : null }) : jsx('div', { style: { height: 12 } }),
+      active && scan.stall && !pausedWhy(scan) ? jsx(StallNotice, { stall: scan.stall, onContinue: session ? resumeChat : null })
+        : active ? jsx(ChatActivity, { sessionId: session?.sessionId, onOpen: session ? openChat : null }) : jsx('div', { style: { height: 12 } }),
       rows.length || finished
         ? jsx(Loading, { query: findings, children: [
             groups.length

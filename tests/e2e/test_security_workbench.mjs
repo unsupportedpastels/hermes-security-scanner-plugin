@@ -596,3 +596,28 @@ test('a paused open scan says why and continues in its own chat', async () => {
   env.fixtures['/scans/scan_paused'].status = 'canceled'
   assert.equal(button(), undefined)
 })
+
+test('a stalled open scan says so and why instead of waiting for the agent', () => {
+  plugin.default.register(context)
+  const since = new Date(Date.now() - 65 * 60000).toISOString()
+  env.fixtures['/scans/scan_stalled'] = {
+    scanId: 'scan_stalled', status: 'awaiting_analysis', reason: null,
+    stall: { since, why: 'Code review has not finished and no worker is running.' },
+    target: { root: '/remote/stalled' }, options: { session: { sessionId: 'rt_1', storedSessionId: 'st_1' } }
+  }
+  env.fixtures['/scans/scan_stalled#findings'] = { items: [], total: 0 }
+  const output = render(plugin.ScanDetail({ id: 'scan_stalled', onBack() {}, onFinding() {} }))
+  assert.match(output, /Stalled/)
+  assert.match(output, /Code review has not finished and no worker is running\./)
+  assert.match(output, /Last progress 1h ago/)
+  assert.doesNotMatch(output, /Waiting for the agent/)
+  assert.doesNotMatch(output, /Running/)
+  assert.ok(nodes(plugin.ScanDetail({ id: 'scan_stalled', onBack() {}, onFinding() {} }))
+    .some((n) => n.type === 'button' && n.props.children === 'Continue scan'))
+  // Paused wins over stalled; no stall reads as running again.
+  env.fixtures['/scans/scan_stalled'].reason = 'paused: needs attention'
+  assert.match(render(plugin.ScanDetail({ id: 'scan_stalled', onBack() {}, onFinding() {} })), /Paused — needs attention/)
+  env.fixtures['/scans/scan_stalled'].reason = null
+  env.fixtures['/scans/scan_stalled'].stall = null
+  assert.match(render(plugin.ScanDetail({ id: 'scan_stalled', onBack() {}, onFinding() {} })), /Running/)
+})

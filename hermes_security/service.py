@@ -25,7 +25,7 @@ from .errors import SecurityError, ValidationError, NotFound, Conflict, SealedEr
 from .store.db import SecurityStore
 from .store.artifacts import scan_dir, write_artifact, read_artifact
 from .standards import ledger
-from .orchestration import METHODOLOGY_VERSION, standard, deep, diff, reducer, next_step
+from .orchestration import METHODOLOGY_VERSION, standard, deep, diff, reducer, next_step, stall
 from .orchestration.coverage import build_coverage
 from .orchestration.worker_protocol import check_candidate
 from .fsutil import is_link, set_private
@@ -287,7 +287,8 @@ class SecurityService:
         if section is not None and not isinstance(section, str):
             raise ValidationError('section must be text')
         if section is None:
-            return {**scan, 'scanId': scan_id, 'plan': self._plan(scan), 'progress': self.progress(scan_id)}
+            return {**scan, 'scanId': scan_id, 'plan': self._plan(scan), 'progress': self.progress(scan_id),
+                    'stall': self.stall(scan)}
         if section == 'summary':
             # Small header an agent can always read, even when the full plan exceeds the tool result cap.
             plan = self._plan(scan, packets=[])
@@ -340,7 +341,21 @@ class SecurityService:
         return {'items': rows[offset:offset + limit], 'total': len(rows)}
 
     # Bookkeeping events that must not count as the scan moving forward (automatic-continue guard).
-    NON_PROGRESS_EVENTS = ('autoresume.scheduled', 'autoresume.paused', 'worker.dispatched', 'worker.missing')
+    NON_PROGRESS_EVENTS = ('autoresume.scheduled', 'autoresume.paused', 'worker.dispatched', 'worker.missing',
+                           'scan.blocked')
+
+    def stall(self, scan, now=None):
+        """``{'since', 'why'}`` when an open scan has stopped moving, else ``None`` (read-time only)."""
+        from datetime import datetime, timezone
+        if scan['sealed_at'] or scan['status'] not in stall.OPEN:
+            return None
+        try:
+            now = now or datetime.now(timezone.utc)
+            ignore = tuple(k for k in self.NON_PROGRESS_EVENTS if k != 'scan.blocked')
+            return stall.derive(scan, self.next_step(scan['scan_id'], now=now),
+                                self.store.last_event(scan['scan_id'], ignore=ignore), now)
+        except SecurityError:
+            return None
 
     def _deep_stop(self, scan, attempts, packets):
         """Deep mode stops after consecutive passes with no new root cause (same rule as resume)."""
@@ -402,15 +417,21 @@ class SecurityService:
         self._safe(result)
         return result
 
-    def checkpoint(self, scan_id, coverage=None, note=None):
+    def checkpoint(self, scan_id, coverage=None, note=None, blocked=False):
         with self._mutation(scan_id) as scan:
             if note is not None and not isinstance(note, str):
                 raise ValidationError('checkpoint note must be text')
+            if not isinstance(blocked, bool):
+                raise ValidationError('blocked must be a boolean')
             self._safe(note)
             source = stable_id('checkpoint', scan_id, coverage, note)
             units = self._coverage_input(scan, coverage or [], source)
             self.store.record_coverage(scan_id, units, source=source)
-            self.store.add_event(scan_id, 'scan.checkpoint', note or 'Coverage checkpoint recorded.')
+            if blocked:
+                # The agent gave up on this turn: the workbench shows the scan as stalled with this note.
+                self.store.add_event(scan_id, 'scan.blocked', note or 'The agent could not continue.')
+            else:
+                self.store.add_event(scan_id, 'scan.checkpoint', note or 'Coverage checkpoint recorded.')
             return {'scanId': scan_id, 'recorded': len(units), 'coverage': self.coverage(scan_id)}
 
     def submit_worker_result(self, payload):
@@ -797,6 +818,8 @@ class SecurityService:
                     sev: n for sev, n in conn.execute(
                         'SELECT severity,count(DISTINCT finding_id) FROM findings WHERE scan_id=? GROUP BY severity',
                         (item['scan_id'],))}
+        for item in items:
+            item['stall'] = self.stall(item)
         return {'items': items, 'total': total}
 
     def workbench_findings(self, *, q=None, triage=None, severity=None, evidence_state=None,

@@ -110,7 +110,7 @@ def _execute(args, service_factory):
         payload = {**payload, "scanId": args.scan_id}
     elif command == "checkpoint":
         payload = {"coverage": payload} if isinstance(payload, list) else payload
-        _object(payload, {"coverage", "note"})
+        _object(payload, {"coverage", "note", "blocked"})
         if not isinstance(payload.get("coverage"), list):
             raise ValidationError("Checkpoint requires a coverage array")
     elif command == "validate":

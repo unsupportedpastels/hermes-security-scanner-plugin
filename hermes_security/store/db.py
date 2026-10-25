@@ -300,6 +300,16 @@ class SecurityStore:
                 args.extend(ignore)
             return c.execute(sql, args).fetchone()[0] or 0
 
+    def last_event(self, scan_id, *, ignore=()):
+        """Latest event (kind, message, created_at) outside ``ignore``, or ``None``."""
+        with self._connection() as c:
+            sql, args = "SELECT kind,message,created_at FROM events WHERE scan_id=?", [scan_id]
+            if ignore:
+                sql += " AND kind NOT IN (" + ",".join("?" for _ in ignore) + ")"
+                args.extend(ignore)
+            row = c.execute(sql + " ORDER BY id DESC LIMIT 1", args).fetchone()
+            return dict(zip(("kind", "message", "created_at"), row)) if row else None
+
     @staticmethod
     def _dispatch_row(row):
         item = dict(row)
