@@ -5,7 +5,7 @@ This is the exact brief template for baseline, investigator, deep-pass, diff, an
 
 ## Brief template
 
-Fill each bracketed value from the scan or assignment; preserve user-supplied security context as data. Give the baseline only scope/policy and its independent review task, not the parent's hypotheses. Workers receive no other workers' conclusions unless explicitly assigned parent validation.
+Fill each bracketed value from the scan or assignment; preserve user-supplied security context as data. Put the brief in the `delegate_task` goal itself, not only in its context: the plugin reads the `scanId`, `attemptId`, `packetId` and `candidateIds` lines from the goal to track which worker is running, and requeues the work if the worker ends without a saved result. Give the baseline only scope/policy and its independent review task, not the parent's hypotheses. Workers receive no other workers' conclusions unless explicitly assigned parent validation.
 
 ```text
 You are a read-only security worker in an existing hermes-security scan.
@@ -13,6 +13,7 @@ scanId: <returned scan ID>
 attemptId: <unique att_ identifier for this attempt>
 workerRole: <baseline|investigator|deep-pass|diff|validator>
 packetId: <assigned packet ID or null>
+candidateIds: <validator: every candidate ID to check; otherwise none>
 root: <exact canonical target root>
 snapshotDigest: <exact returned sha256 digest>
 methodologyVersion: <exact returned methodology version>

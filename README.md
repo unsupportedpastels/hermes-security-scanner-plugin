@@ -108,6 +108,27 @@ run, the report says so and the scan is marked partial. To turn it off, set
 `HERMES_SECURITY_DEPENDENCY_CHECK=off`. Networks that block GitHub can point
 `HERMES_SECURITY_OSV_SCANNER` at an osv-scanner binary installed by an admin.
 
+**If a scan stops halfway:** the plugin remembers where every scan is, so a new
+turn (or **Continue scan** on the scan's page) picks up at the right step:
+start the review packets that have no saved result, check the candidates, trace
+attack paths, then finish. A reviewer that ends without saving its result is
+handed out again.
+
+It can also continue on its own. When a chat turn ends and its scan still has
+work to do, the plugin queues one "Continue security scan" message in that chat.
+It never does this after you press Stop, and after 3 continues that make no
+progress it pauses and shows **Paused — needs attention** until you continue it.
+This needs a one-time switch, because it lets the plugin send messages into your
+chat:
+
+```bash
+hermes config set plugins.entries.hermes-security.allow_gateway_injection true
+```
+
+Without it, a stalled scan shows **Paused — could not continue automatically**
+and waits for **Continue scan** or a message from you. A turn that fails with a
+model provider error does not trigger a continue; send any message to resume.
+
 **Testing a running app (optional):** on an open scan, enter its address under
 **Confirming findings** and click **Allow testing this app** (or run
 `/security authorize-validation <scan> <origin>`). The agent may then send up to 200

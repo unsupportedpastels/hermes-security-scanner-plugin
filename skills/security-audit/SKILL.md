@@ -44,6 +44,20 @@ cannot mint a grant yourself. Do not start an app automatically.
 Read recorded results with `security_scan_get`, section `validations`, before
 claiming confirmation. A saved permission is not evidence that any test ran.
 
+## Every turn: read the next step first
+
+A scan's place is stored in the plugin, not in your memory. At the start of every turn that touches a scan, and whenever you receive a message that begins `Continue security scan <id>`, call `security_scan_get` with section `next` and do exactly that step:
+
+- `dispatch`: start the listed packets (at most `slots` now), one `delegate_task` per packet, using each item's `attemptId` and `packetId`.
+- `wait`: workers are still running; wait for their results and do not start them again.
+- `validate`: send the listed candidates to fresh validator delegates.
+- `chains`: call `security_scan_record_chains`. `finalize`: call `security_scan_finalize`, then read back and report.
+- `done`: the scan is finished; report it. `blocked`: tell the user why and do nothing else.
+
+Every `delegate_task` goal must contain the worker brief lines `scanId: <id>`, `attemptId: <id>` and `packetId: <id>` (validators: `candidateIds: ...`), in the goal itself rather than only its context, so the plugin can tell which worker is running and requeue one that ends without a saved result.
+
+The plugin may queue a `Continue security scan` message after a turn ends with work left (when the user turned on automatic continue). Treat it as the user asking you to continue. Automatic continue never happens after the user stopped a turn; if the user stopped you, do not resume on your own, and continue only when they ask.
+
 ## Standard procedure
 
 1. Resolve the exact target root, scope, supplied context, inherited security policy, and snapshot; record explicit exclusions and conflicts rather than widening scope. Start the scan with only the options the user chose (`path`, `mode`, optional `allow_tests`, `scope`, `context`); diff scans pick their base automatically. Use the scan's `schedule` (6 delegates at once, never above the host's 10) without asking; honor any stricter user limits. On a very large repository (hundreds of thousands of lines), suggest scanning one trust boundary at a time with `scope` rather than the whole tree at once. Read existing scan context with `security_scan_get` when continuing a supplied scan ID instead of starting another.
@@ -62,7 +76,7 @@ claiming confirmation. A saved permission is not evidence that any test ran.
 
 If delegation is unavailable, do the baseline and focused packets sequentially yourself, preserving separate attempts and the same submission/validation contract. Record the coverage note **independent review unavailable**; do not claim independent reviewers ran. A failed worker is not a negative result.
 
-On a stop request call `security_scan_cancel`, stop relevant delegates, and read back the scan. Preserve accepted work and report canceled/partial status, not completion. On resume use `security_scan_get` to recover accepted attempts, outstanding packets, budget consumed, snapshot, and seal state. Use the installed service/CLI resume operation when required (consult its help); there is no agent resume tool. Relaunch only incomplete packets with fresh attemptIds and unchanged scan context. A changed snapshot requires a new linked scan; sealed scans cannot accept late submissions or resume in place.
+On a stop request call `security_scan_cancel`, stop relevant delegates, and read back the scan. Preserve accepted work and report canceled/partial status, not completion. On resume read section `next` first, then use `security_scan_get` to recover accepted attempts, outstanding packets, budget consumed, snapshot, and seal state. Use the installed service/CLI resume operation when required (consult its help); there is no agent resume tool. Relaunch only incomplete packets with fresh attemptIds and unchanged scan context. A changed snapshot requires a new linked scan; sealed scans cannot accept late submissions or resume in place.
 
 ## Deep mode
 

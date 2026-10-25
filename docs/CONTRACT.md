@@ -350,7 +350,9 @@ Banned copy words in generated text: comprehensive, robust, seamless, delve, cri
 
 `SecurityService(data_dir: Path, *, profile: str = "default")` wraps the store and all libraries. Methods mirror the
 tools and HTTP API: `start_scan(**opts)`, `get_scan(scan_id, section=None, limit, offset)` (sections: `summary` = small
-header with scanId/root/snapshotDigest/methodologyVersion/submit/packetIds, always under the tool cap; `packets`
+header with scanId/root/snapshotDigest/methodologyVersion/submit/packetIds and `next`, always under the tool cap;
+`next` = `next_step(scan_id)`: `{step: dispatch|wait|validate|chains|finalize|done|blocked, items (<=50, to-do
+first then running), total, actionable, reason, progressKey, how}` derived only from stored state; `packets`
 paginated; plus inventory, coverage, candidates, findings, workers, validations, chains, activity, manifest,
 report), `checkpoint(...)`,
 `submit_worker_result(payload)`, `record_validations(scan_id, receipts|plans)`, `propose_chains(scan_id)`,
