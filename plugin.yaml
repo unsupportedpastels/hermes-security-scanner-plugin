@@ -17,5 +17,10 @@
     "security_scan_finalize",
     "security_scan_cancel",
     "security_scan_export"
+  ],
+  "provides_hooks": [
+    "on_session_end",
+    "subagent_start",
+    "subagent_stop"
   ]
 }

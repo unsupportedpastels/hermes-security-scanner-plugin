@@ -2,9 +2,12 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Callable
 
 from .errors import SecurityError, ValidationError
+
+logger = logging.getLogger(__name__)
 
 MAX_RESULT_CHARS = 60_000
 MAX_INPUT_BYTES = 2 * 1024 * 1024
@@ -150,7 +153,9 @@ def make_handler(name: str, get_service: Callable):
     suffix = name.removeprefix("security_scan_")
 
     def handler(args, **kwargs):
-        del kwargs  # task_id / parent_agent are host metadata, not service input.
+        # task_id / parent_agent are host metadata, not service input; session_id only links
+        # a newly started scan to its chat so automatic continue can find it.
+        session_id = kwargs.get("session_id")
         try:
             _validate(args, schema)
             try:
@@ -162,9 +167,28 @@ def make_handler(name: str, get_service: Callable):
             opts = dict(args)
             if suffix == "record_validations":
                 opts["user_authorized"] = False
-            result = getattr(get_service(), _METHODS.get(suffix, suffix))(**opts)
+            service = get_service()
+            result = getattr(service, _METHODS.get(suffix, suffix))(**opts)
+            _after_call(service, suffix, args, result, session_id)
             return encode_result(result, args=args)
         except Exception as exc:
             return json.dumps(error_envelope(exc))
 
     return handler
+
+
+def _after_call(service, suffix, args, result, session_id):
+    """Best-effort bookkeeping for automatic continue; never changes the tool result."""
+    try:
+        from . import recovery
+        scan_id = args.get("scan_id")
+        if scan_id is None and isinstance(args.get("payload"), dict):
+            scan_id = args["payload"].get("scanId")
+        if suffix == "start" and isinstance(result, dict):
+            scan_id = result.get("scanId")
+            if isinstance(session_id, str) and session_id and len(session_id) <= 200:
+                service.link_session(scan_id, session_id)
+        if isinstance(scan_id, str):
+            recovery.note_activity(service, scan_id)
+    except Exception:
+        logger.debug("hermes-security: post-call bookkeeping failed", exc_info=True)

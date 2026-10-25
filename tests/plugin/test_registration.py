@@ -12,6 +12,10 @@ class FakeContext:
         self.commands = {}
         self.cli = {}
         self.skills = {}
+        self.hooks = {}
+
+    def register_hook(self, name, callback):
+        self.hooks.setdefault(name, []).append(callback)
 
     def register_tool(self, name, toolset, schema, handler, check_fn=None, requires_env=None,
                       is_async=False, description="", emoji="", override=False):
@@ -48,6 +52,9 @@ def test_registration_is_lazy_and_exact(tmp_path, monkeypatch):
     assert set(ctx.commands) == {"security"}
     # `hermes security` belongs to Hermes core; the plugin CLI must not collide with it.
     assert set(ctx.cli) == {"security-review"}
+    # Turn and worker hooks drive automatic continue; the plugin owns no timers or threads.
+    assert set(ctx.hooks) == {"on_session_end", "subagent_start", "subagent_stop"}
+    assert all(len(v) == 1 and callable(v[0]) for v in ctx.hooks.values())
 
 
 def test_cached_service_is_profile_scoped(tmp_path, monkeypatch):
@@ -72,8 +79,9 @@ def test_old_host_without_cli_registration(tmp_path):
     from hermes_security.plugin import register
     ctx = FakeContext(tmp_path)
     ctx.register_cli_command = None
+    ctx.register_hook = None
     register(ctx)
-    assert len(ctx.tools) == 9
+    assert len(ctx.tools) == 9 and ctx.hooks == {}
 
 
 def test_loads_under_synthetic_hermes_module_name(monkeypatch):
@@ -90,13 +98,14 @@ def test_loads_under_synthetic_hermes_module_name(monkeypatch):
                                                       submodule_search_locations=[{str(root)!r}])
         mod = importlib.util.module_from_spec(spec); sys.modules[spec.name] = mod; spec.loader.exec_module(mod)
         class Ctx:
-            def __init__(self): self.tools = []
+            def __init__(self): self.tools = []; self.hooks = []
             def register_tool(self, name, *a, **k): self.tools.append(name)
+            def register_hook(self, name, cb): assert callable(cb); self.hooks.append(name)
             def __getattr__(self, name): return lambda *a, **k: None
         ctx = Ctx(); mod.register(ctx)
         assert 'hermes_security' not in sys.modules, 'absolute import leaked'
-        print(len(ctx.tools))
+        print(len(ctx.tools), sorted(ctx.hooks))
     """)
     out = subprocess.run([sys.executable, "-c", code], cwd="/", capture_output=True, text=True, timeout=60)
     assert out.returncode == 0, out.stderr[-2000:]
-    assert out.stdout.strip() == "9"
+    assert out.stdout.strip() == "9 ['on_session_end', 'subagent_start', 'subagent_stop']"
