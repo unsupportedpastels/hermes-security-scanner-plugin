@@ -264,6 +264,114 @@ class SecurityStore:
             c.execute("UPDATE scans SET options=? WHERE scan_id=?", (self._json(options), scan_id))
             return self._scan(c, scan_id)
 
+    def update_scan_option(self, scan_id, key, update):
+        """Atomic read-modify-write of one option: ``update(copy_of_old) -> new`` (None removes it)."""
+        with self.transaction() as c:
+            row = self._scan(c, scan_id)
+            options = dict(row["options"])
+            old = options.get(key)
+            new = update(json.loads(json.dumps(old)))
+            if new == old:
+                return row
+            if new is None:
+                options.pop(key, None)
+            else:
+                options[key] = new
+            c.execute("UPDATE scans SET options=? WHERE scan_id=?", (self._json(options), scan_id))
+            return self._scan(c, scan_id)
+
+    def open_scans_for_session(self, session_id, *, limit=20):
+        """Unfinished, not-canceled scans linked to one chat session (newest first)."""
+        with self._connection() as c:
+            rows = c.execute(
+                "SELECT scan_id FROM scans WHERE sealed_at IS NULL AND status!='canceled' AND "
+                "(json_extract(options,'$.session.sessionId')=? OR json_extract(options,'$.session.storedSessionId')=?) "
+                "ORDER BY rowid DESC LIMIT ?",
+                (session_id, session_id, limit),
+            ).fetchall()
+            return [self._scan(c, r[0]) for r in rows]
+
+    def progress_key(self, scan_id, *, ignore=()):
+        """Latest event id, skipping bookkeeping kinds that do not mean the scan moved forward."""
+        with self._connection() as c:
+            sql, args = "SELECT max(id) FROM events WHERE scan_id=?", [scan_id]
+            if ignore:
+                sql += " AND kind NOT IN (" + ",".join("?" for _ in ignore) + ")"
+                args.extend(ignore)
+            return c.execute(sql, args).fetchone()[0] or 0
+
+    @staticmethod
+    def _dispatch_row(row):
+        item = dict(row)
+        item["candidate_ids"] = json.loads(item["candidate_ids"] or "[]")
+        return item
+
+    @staticmethod
+    def _answered(c, scan_id, attempt_id):
+        """True when a worker result for this dispatch (or an incremental _N submit) was accepted."""
+        rows = c.execute(
+            "SELECT attempt_id FROM worker_attempts WHERE scan_id=? AND status='accepted'", (scan_id,)
+        ).fetchall()
+        return any(r[0] == attempt_id or r[0].startswith(attempt_id + "_") for r in rows)
+
+    def record_dispatch(self, scan_id, attempt_id, *, packet_id=None, role=None, candidate_ids=(),
+                        parent_session_id=None, child_session_id=None):
+        """Remember a delegate started for an attempt. Returns the row, or None when already answered."""
+        self._json([attempt_id, packet_id, role, list(candidate_ids), parent_session_id, child_session_id])
+        with self.transaction() as c:
+            self._scan(c, scan_id, True)
+            if self._answered(c, scan_id, attempt_id):
+                return None
+            old = c.execute("SELECT * FROM dispatches WHERE scan_id=? AND attempt_id=?", (scan_id, attempt_id)).fetchone()
+            if old and old["status"] == "running" and old["child_session_id"] == child_session_id:
+                return self._dispatch_row(old)
+            if old:
+                c.execute(
+                    "UPDATE dispatches SET packet_id=COALESCE(?,packet_id),role=COALESCE(?,role),candidate_ids=?,"
+                    "parent_session_id=?,child_session_id=?,status='running',dispatched_at=?,finished_at=NULL,detail=NULL "
+                    "WHERE scan_id=? AND attempt_id=?",
+                    (packet_id, role, self._json(list(candidate_ids) or json.loads(old["candidate_ids"])),
+                     parent_session_id, child_session_id, utcnow(), scan_id, attempt_id),
+                )
+            else:
+                c.execute(
+                    "INSERT INTO dispatches(scan_id,attempt_id,packet_id,role,candidate_ids,parent_session_id,"
+                    "child_session_id,status,dispatched_at) VALUES(?,?,?,?,?,?,?,?,?)",
+                    (scan_id, attempt_id, packet_id, role, self._json(list(candidate_ids)), parent_session_id,
+                     child_session_id, "running", utcnow()),
+                )
+            return self._dispatch_row(c.execute(
+                "SELECT * FROM dispatches WHERE scan_id=? AND attempt_id=?", (scan_id, attempt_id)).fetchone())
+
+    def finish_dispatch(self, scan_id, attempt_id, *, detail=None):
+        """Close a running dispatch: 'finished' if its result was accepted, else 'missing'.
+
+        Idempotent: a dispatch that is no longer running is left alone (late hooks)."""
+        self._json(detail)
+        with self.transaction() as c:
+            self._scan(c, scan_id, True)
+            row = c.execute("SELECT * FROM dispatches WHERE scan_id=? AND attempt_id=?", (scan_id, attempt_id)).fetchone()
+            if row is None or row["status"] != "running":
+                return None
+            status = "finished" if self._answered(c, scan_id, attempt_id) else "missing"
+            c.execute("UPDATE dispatches SET status=?,finished_at=?,detail=? WHERE scan_id=? AND attempt_id=?",
+                      (status, utcnow(), detail, scan_id, attempt_id))
+            return self._dispatch_row(c.execute(
+                "SELECT * FROM dispatches WHERE scan_id=? AND attempt_id=?", (scan_id, attempt_id)).fetchone())
+
+    def dispatch_for_child(self, child_session_id):
+        """Newest dispatch started for this child session on an unfinished scan, or None."""
+        with self._connection() as c:
+            row = c.execute(
+                "SELECT d.* FROM dispatches d JOIN scans s ON s.scan_id=d.scan_id WHERE d.child_session_id=? "
+                "AND s.sealed_at IS NULL ORDER BY d.rowid DESC LIMIT 1", (child_session_id,)).fetchone()
+            return self._dispatch_row(row) if row else None
+
+    def dispatches(self, scan_id):
+        with self._connection() as c:
+            return [self._dispatch_row(r) for r in c.execute(
+                "SELECT * FROM dispatches WHERE scan_id=? ORDER BY rowid", (scan_id,))]
+
     def inventory(self, scan_id, *, limit=None, offset=0):
         self._page(limit if limit is not None else 0, offset)
         with self._connection() as c:

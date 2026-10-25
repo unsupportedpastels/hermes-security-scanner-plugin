@@ -48,10 +48,24 @@ def test_migration_reentry_and_future_version():
     c.execute("BEGIN IMMEDIATE")
     migrate(c)
     c.commit()
-    assert c.execute("pragma user_version").fetchone()[0] == 1
-    c.execute("pragma user_version=2")
+    assert c.execute("pragma user_version").fetchone()[0] == 2
+    c.execute("pragma user_version=3")
     with pytest.raises(Conflict):
         migrate(c)
+    c.close()
+
+
+def test_version_1_database_upgrades_in_place():
+    from hermes_security.store.migrations import DDL
+    c = sqlite3.connect(":memory:")
+    for statement in DDL:
+        c.execute(statement)
+    c.execute("pragma user_version=1")
+    c.execute("BEGIN IMMEDIATE")
+    migrate(c)
+    c.commit()
+    assert c.execute("pragma user_version").fetchone()[0] == 2
+    assert c.execute("select count(*) from dispatches").fetchone()[0] == 0
     c.close()
 
 

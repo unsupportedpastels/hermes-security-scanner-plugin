@@ -2,7 +2,7 @@
 
 from ..errors import Conflict
 
-VERSION = 1
+VERSION = 2
 DDL = [
     """CREATE TABLE repositories (repo_key TEXT PRIMARY KEY, root TEXT NOT NULL)""",
     """CREATE TABLE scans (scan_id TEXT PRIMARY KEY, repo_key TEXT NOT NULL REFERENCES repositories(repo_key), root TEXT NOT NULL,
@@ -34,6 +34,15 @@ DDL = [
     "CREATE INDEX findings_identity ON findings(finding_id)",
     "CREATE INDEX events_scan ON events(scan_id,id)",
 ]
+# v2: delegate dispatches seen through host hooks (worker tracking), and a cheap
+# lookup of open scans by their chat session for automatic continue.
+DDL_V2 = [
+    """CREATE TABLE dispatches (scan_id TEXT NOT NULL REFERENCES scans(scan_id), attempt_id TEXT NOT NULL, packet_id TEXT,
+       role TEXT, candidate_ids TEXT NOT NULL DEFAULT '[]', parent_session_id TEXT, child_session_id TEXT,
+       status TEXT NOT NULL, dispatched_at TEXT NOT NULL, finished_at TEXT, detail TEXT, PRIMARY KEY(scan_id,attempt_id))""",
+    "CREATE INDEX dispatches_child ON dispatches(child_session_id)",
+    "CREATE INDEX scans_open ON scans(sealed_at,status)",
+]
 
 
 def migrate(connection):
@@ -45,3 +54,7 @@ def migrate(connection):
         for statement in DDL:
             connection.execute(statement)
         connection.execute("PRAGMA user_version=1")
+    if version < 2:
+        for statement in DDL_V2:
+            connection.execute(statement)
+        connection.execute("PRAGMA user_version=2")

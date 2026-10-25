@@ -38,7 +38,7 @@ TOOL_SCHEMAS = [
     }, ["path"]),
     _schema("get", "Read scan state or one paginated section before continuing a review. Read every page; incomplete coverage is not a clean result.", {
         "scan_id": _SCAN,
-        "section": _field("string", "Section to read: summary (scan header: digest, methodology, submit instructions, packet IDs), packets, inventory, candidates, coverage, workers, validations, chains, activity, findings, manifest, or report. Use summary then packets when a start or get result is truncated."),
+        "section": _field("string", "Section to read: next (the one step to do now: dispatch, wait, validate, chains, finalize, done or blocked, with its items; read it first on every turn of a scan), summary (scan header: digest, methodology, submit instructions, packet IDs), packets, inventory, candidates, coverage, workers, validations, chains, activity, findings, manifest, or report. Use summary then packets when a start or get result is truncated."),
         "limit": _field("integer", "Maximum records per page; reduce if the response is truncated.", minimum=1, maximum=500, default=50),
         "offset": _field("integer", "Zero-based page offset.", minimum=0, default=0),
     }, ["scan_id"]),

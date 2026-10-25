@@ -25,7 +25,7 @@ from .errors import SecurityError, ValidationError, NotFound, Conflict, SealedEr
 from .store.db import SecurityStore
 from .store.artifacts import scan_dir, write_artifact, read_artifact
 from .standards import ledger
-from .orchestration import METHODOLOGY_VERSION, standard, deep, diff, reducer
+from .orchestration import METHODOLOGY_VERSION, standard, deep, diff, reducer, next_step
 from .orchestration.coverage import build_coverage
 from .orchestration.worker_protocol import check_candidate
 from .fsutil import is_link, set_private
@@ -295,8 +295,11 @@ class SecurityService:
                     'laneCount': len(plan['lanes']), 'excludedTotal': plan['excluded']['total'],
                     'schedule': standard.SCHEDULE, 'dependencyCheck': plan['dependencyCheck'],
                     'possibleDuplicates': self._possible_duplicates(scan_id),
-                    'sections': ['summary', 'queue', 'packets', 'dependencies', 'inventory', 'coverage', 'candidates',
+                    'next': self.next_step(scan_id),
+                    'sections': ['summary', 'next', 'queue', 'packets', 'dependencies', 'inventory', 'coverage', 'candidates',
                                  'findings', 'workers', 'validations', 'chains', 'activity', 'manifest', 'report']}
+        if section == 'next':
+            return self.next_step(scan_id)
         if section == 'queue':
             queue = self._queue(scan)
             return {**queue, 'items': queue['items'][offset:offset + limit], 'total': len(queue['items'])}
@@ -331,6 +334,43 @@ class SecurityService:
         else:
             raise ValidationError('unknown scan section')
         return {'items': rows[offset:offset + limit], 'total': len(rows)}
+
+    # Bookkeeping events that must not count as the scan moving forward (automatic-continue guard).
+    NON_PROGRESS_EVENTS = ('autoresume.scheduled', 'autoresume.paused', 'worker.dispatched', 'worker.missing')
+
+    def _deep_stop(self, scan, attempts, packets):
+        """Deep mode stops after consecutive passes with no new root cause (same rule as resume)."""
+        known, counts = set(), []
+        candidates = self._candidates(scan['scan_id'])
+        for packet in packets:
+            matched = [a for a in attempts if a['packet_id'] == packet['packetId'] and a['status'] == 'accepted']
+            if not matched:
+                break
+            aids = {a['attempt_id'] for a in matched}
+            roots = {(c['ruleId'], c['identity']['anchor']) for c in candidates if aids.intersection(c.get('provenance', {}).get('workerAttemptIds', []))}
+            counts.append(len(roots - known)); known.update(roots)
+        return deep.stop_reason(counts, scan['options']['deep_passes'])
+
+    def next_step(self, scan_id, now=None):
+        """The parent's next step, derived only from what the scan has stored."""
+        from datetime import datetime, timezone
+        scan = self._scan(scan_id)
+        progress_key = self.store.progress_key(scan_id, ignore=self.NON_PROGRESS_EVENTS)
+        if scan['sealed_at'] or scan['status'] == 'canceled':
+            return next_step.derive(scan=scan, packets=[], attempts=[], dispatches=[], reduced=None, receipts=[],
+                                    chains_recorded=False, progress_key=progress_key, now=None)
+        attempts = self._attempts(scan_id)
+        packets = self._packets(scan)
+        try:
+            reduced = self._reduced(scan_id)
+        except Conflict:
+            reduced = None
+        return next_step.derive(
+            scan=scan, packets=packets, attempts=attempts, dispatches=self.store.dispatches(scan_id),
+            reduced=reduced, receipts=self.store.validations(scan_id),
+            chains_recorded=self.store.get_chains(scan_id) is not None, progress_key=progress_key,
+            now=now or datetime.now(timezone.utc), max_parallel=standard.MAX_PARALLEL_WORKERS,
+            deep_stopped=scan['mode'] == 'deep' and bool(self._deep_stop(scan, attempts, packets)))
 
     def _coverage_input(self, scan, units, source):
         if not isinstance(units, list) or len(units) > 50000:
@@ -672,22 +712,16 @@ class SecurityService:
             for attempt in attempts:
                 if attempt['status'] == 'running':
                     self.store.finish_attempt(scan_id, attempt['attempt_id'], 'missing', error='Interrupted before an accepted result.')
+            for row in self.store.dispatches(scan_id):
+                if row['status'] == 'running':
+                    self.store.finish_dispatch(scan_id, row['attempt_id'], detail='scan resumed')
             for packet in packets:
                 prior = [a for a in attempts if a['packet_id'] == packet['packetId']]
                 if prior:
                     packet['attemptId'] = stable_id('att', scan_id, packet['packetId'], 'resume', len(prior))
             stop = None
             if scan['mode'] == 'deep':
-                known, counts = set(), []
-                candidates = self._candidates(scan_id)
-                for packet in self._packets(scan):
-                    matched = [a for a in attempts if a['packet_id'] == packet['packetId'] and a['status'] == 'accepted']
-                    if not matched:
-                        break
-                    aids = {a['attempt_id'] for a in matched}
-                    roots = {(c['ruleId'], c['identity']['anchor']) for c in candidates if aids.intersection(c.get('provenance', {}).get('workerAttemptIds', []))}
-                    counts.append(len(roots - known)); known.update(roots)
-                stop = deep.stop_reason(counts, scan['options']['deep_passes'])
+                stop = self._deep_stop(scan, attempts, self._packets(scan))
                 if stop:
                     packets = []
             self.store.set_scan_status(scan_id, 'awaiting_analysis')
