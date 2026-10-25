@@ -2,7 +2,7 @@
 
 from ..errors import Conflict
 
-VERSION = 2
+VERSION = 3
 DDL = [
     """CREATE TABLE repositories (repo_key TEXT PRIMARY KEY, root TEXT NOT NULL)""",
     """CREATE TABLE scans (scan_id TEXT PRIMARY KEY, repo_key TEXT NOT NULL REFERENCES repositories(repo_key), root TEXT NOT NULL,
@@ -58,3 +58,12 @@ def migrate(connection):
         for statement in DDL_V2:
             connection.execute(statement)
         connection.execute("PRAGMA user_version=2")
+    if version < 3:
+        # v3: the detector backends were removed by editing the v1 DDL in place, so
+        # databases created before that still have findings.detectors (NOT NULL, which
+        # makes every finding insert fail) and the unused detector_runs table.
+        columns = [row[1] for row in connection.execute("PRAGMA table_info(findings)")]
+        if "detectors" in columns:
+            connection.execute("ALTER TABLE findings DROP COLUMN detectors")
+        connection.execute("DROP TABLE IF EXISTS detector_runs")
+        connection.execute("PRAGMA user_version=3")

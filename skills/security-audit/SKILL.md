@@ -23,6 +23,14 @@ The policy is static-by-default (`safetyLevel: "static"`): read-only analysis. U
 
 Never serialize literal secrets in submissions, logs, or artifacts. Retain type, location, and the plugin's `sha256:` fingerprint only; use plugin-redacted evidence. Do not test discovered credentials. Every citation needs path + line range + exact excerpt matching the pinned snapshot (through the plugin's redaction rules), not a paraphrase or invented snippet. Never claim runtime confirmation from source inspection: planned or unrun checks are **NOT RUN** (`NOT_RUN` in JSON).
 
+## Run without questions
+
+A scan runs on its own from start to report. Never call `clarify` or stop to ask the user how to proceed; pick the best course yourself and keep going, as long as it is not destructive. Destructive means: changing or deleting anything in the target repository, deleting or rewriting scan results or the plugin's database, changing the scan's safety level, or publishing anything. Never do those to get past a problem.
+
+When a plugin tool fails with an internal error, retry it once. If it still fails, do not debug or patch the plugin, its database or its code from the scan; record a short `security_scan_checkpoint` note, tell the user in one plain sentence that the scan could not finish because of a plugin error and that its results so far are saved, and stop.
+
+Keep what the user sees short and plain: what is happening ("Reviewing 4 areas of the code", "Checking 6 possible issues") and the final report. Do not narrate tool calls, IDs, attempts, packets, schema details or internal reasoning.
+
 ## Confirming findings (tests and running apps)
 
 Tests are allowed when the user started the scan with `allow_tests: true` (the

@@ -113,6 +113,8 @@ def error_envelope(exc):
         from .target.redact import redact_secrets
         message = redact_secrets(str(exc))[0][:1000]
         return {"ok": False, "error": {"code": exc.code, "message": message}}
+    # Hidden from the chat, but logged so the cause is visible in the host log.
+    logger.error("hermes-security: unexpected error", exc_info=(type(exc), exc, exc.__traceback__))
     return {"ok": False, "error": {"code": "internal_error", "message": "Security operation failed"}}
 
 

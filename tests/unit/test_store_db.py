@@ -35,7 +35,7 @@ def test_migrations_and_rollback(tmp_path):
     with s.transaction() as c:
         assert c.execute("pragma foreign_keys").fetchone()[0] == 1
         assert c.execute("pragma journal_mode").fetchone()[0] == "wal"
-        assert c.execute("pragma user_version").fetchone()[0] == 2
+        assert c.execute("pragma user_version").fetchone()[0] == 3
     with pytest.raises(RuntimeError):
         with s.transaction() as c:
             c.execute("update scans set status='failed' where scan_id=?", (a,))
