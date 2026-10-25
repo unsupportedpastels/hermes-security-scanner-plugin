@@ -16,6 +16,8 @@ packetId: <assigned packet ID or null>
 candidateIds: <validator: every candidate ID to check; otherwise none>
 root: <exact canonical target root>
 workDir: <the scan's workDir from security_scan_get summary; the only place to write files>
+First step: `cd` into workDir in the terminal, before any other command, so
+even a relative write lands there. Read the target by absolute path.
 snapshotDigest: <exact returned sha256 digest>
 methodologyVersion: <exact returned methodology version>
 revision: <full returned revision or null>

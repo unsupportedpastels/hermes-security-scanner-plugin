@@ -215,7 +215,7 @@
       "license": "Apache-2.0",
       "modified": true,
       "sourceSha256": "a89c6aa0649def73f815bac662c679cb07a00b71b995addb53ad1b6d8313022a",
-      "destinationSha256": "27f920cc307827f2f50d53d440b9b8c5c547ebf63f943af2b1a87f11da4c6f63"
+      "destinationSha256": "af0703434e0ffea6861004bf09144f4067d2e2ad6cee1e39ed441aa1542d0570"
     },
     {
       "source": "plugins/codex-security/references/scan-contract.md",
@@ -223,7 +223,7 @@
       "license": "Apache-2.0",
       "modified": true,
       "sourceSha256": "b362636c29d1e8b18053481abe2f97d7bb099a97040f5b63aa2702a41c1d62c8",
-      "destinationSha256": "27f920cc307827f2f50d53d440b9b8c5c547ebf63f943af2b1a87f11da4c6f63"
+      "destinationSha256": "af0703434e0ffea6861004bf09144f4067d2e2ad6cee1e39ed441aa1542d0570"
     },
     {
       "source": "plugins/codex-security/skills/define-security-policy/SKILL.md",
