@@ -101,7 +101,10 @@ class SecurityService:
                 self.store.release(scan_id, owner)
 
     def _current(self, scan):
-        if not target.is_snapshot_current(scan['target'], scan['snapshot_digest']):
+        # New files (e.g. a worker's stray notes) are out of scope, not a reason to void the
+        # scan; only changed or missing inventory files invalidate the recorded evidence.
+        diff = target.compare_inventory(scan['target'], self.store.inventory(scan['scan_id']))
+        if diff is None or diff['changed']:
             raise Conflict('snapshot changed; start a new scan')
 
     PHASES = (('preparing', 'Preparing scan'), ('threat_model', 'Building threat model'),
@@ -184,6 +187,7 @@ class SecurityService:
                 'lanes': standard.lanes(), 'applicableControls': ledger.applicable_controls(scan['options']['surfaces']),
                 'packets': self._packets(scan) if packets is None else packets,
                 'workerBriefPath': str(refs / 'worker-packet.md'),
+                'workDir': str(self._work(scan['scan_id'])),
                 'schedule': standard.SCHEDULE,
                 'dependencyCheck': dependencies.compact(scan['options'].get('dependencies')),
                 'submit': {'tool': 'security_scan_submit_worker_result', 'cli': 'PYTHONPATH=' + shlex.quote(str(Path(__file__).resolve().parents[1])) + ' ' + shlex.quote(sys.executable) + ' -m hermes_security submit --scan ' + scan['scan_id'] + ' --file <json>'},
@@ -289,7 +293,7 @@ class SecurityService:
             plan = self._plan(scan, packets=[])
             packets = self._packets(scan)
             keep = ('scanId', 'root', 'snapshotDigest', 'methodologyVersion', 'surfaces', 'specialistProfiles',
-                    'workerBriefPath', 'submit', 'inventory', 'status')
+                    'workerBriefPath', 'workDir', 'submit', 'inventory', 'status')
             return {**{k: plan[k] for k in keep}, 'mode': scan['mode'], 'safetyLevel': scan['safety_level'],
                     'packetCount': len(packets), 'packetIds': [p['packetId'] for p in packets],
                     'laneCount': len(plan['lanes']), 'excludedTotal': plan['excluded']['total'],
@@ -658,7 +662,11 @@ class SecurityService:
                 # Requested but unavailable: known-vulnerable dependencies were not checked.
                 gaps.append(dependencies.describe(receipt))
             if not target.is_snapshot_current(scan['target'], scan['snapshot_digest']):
-                gaps.append('Target changed after this recorded snapshot; evidence describes the original snapshot only.')
+                diff = target.compare_inventory(scan['target'], self.store.inventory(scan_id))
+                if diff is not None and not diff['changed']:
+                    gaps.append(f"{len(diff['added'])} files were added after this scan started and were not reviewed.")
+                else:
+                    gaps.append('Target changed after this recorded snapshot; evidence describes the original snapshot only.')
             if gaps:
                 coverage['gaps'].extend(gaps)
                 coverage['completeness'] = 'partial'

@@ -23,6 +23,24 @@ def is_snapshot_current(target, digest):
     except (TargetError, OSError, ValueError): return False
 
 
+def compare_inventory(target, stored_files):
+    """Compare the target now with the scan's stored inventory.
+
+    Returns ``{'changed': [...], 'added': [...]}``: ``changed`` lists inventory files whose
+    bytes changed or that disappeared (their evidence no longer describes the tree);
+    ``added`` lists new files, which were simply never in scope. ``None`` when the target
+    can no longer be read.
+    """
+    try:
+        current = resolve_target(target['root'], scope=target.get('scope'), base=target.get('base'), head=target.get('head'))
+        now = {f['path']: f['sha256'] for f in build_inventory(current)['files']}
+    except (TargetError, OSError, ValueError):
+        return None
+    before = {f['path']: f['sha256'] for f in stored_files}
+    return {'changed': sorted(p for p, h in before.items() if now.get(p) != h),
+            'added': sorted(set(now) - set(before))}
+
+
 def diff_manifest(target):
     if target['kind'] != 'git': raise TargetError('Diff requires Git')
     root = target['root']; base = target.get('base') or target.get('revision'); head = target.get('head')
