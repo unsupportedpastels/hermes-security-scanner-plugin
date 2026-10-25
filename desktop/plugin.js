@@ -259,6 +259,7 @@ const CSS = `
 .hs-state{flex:none;display:inline-flex;align-items:center;gap:5px;color:var(--ui-text-secondary)}
 .hs-state i{width:7px;height:7px;border-radius:50%;background:var(--ui-text-tertiary)}.hs-state[data-state=done] i{background:var(--hs-ok)}.hs-state[data-state=stopped] i{background:var(--hs-high)}
 .hs-state[data-state=running] i{background:var(--ui-accent);animation:hs-pulse 1.2s ease-in-out infinite}
+.hs-state[data-state=paused] i{background:var(--hs-medium)}
 @keyframes hs-pulse{50%{opacity:.25}}
 .hs-nums{display:inline-flex;gap:8px}.hs-nums span{color:var(--hs-sev)}
 .hs-detail{flex:1;min-width:0;overflow:auto;padding:22px 28px}.hs-detail>.hs-empty{height:100%}
@@ -403,7 +404,10 @@ function Back({ onBack }) {
 function SevBadge({ level }) {
   return jsx('span', { className: 'hs-badge', 'data-sev': level, children: sevName(level) })
 }
+// The plugin sets reason "paused: <why>" when a scan stalls and cannot continue on its own.
+const pausedWhy = (row) => (!row.sealedAt && /^paused: /.test(row.reason || '') ? row.reason.slice(8) : null)
 function scanState(row) {
+  if (RUNNING.includes(row.status) && pausedWhy(row)) return ['paused', `Paused — ${pausedWhy(row)}`]
   if (RUNNING.includes(row.status)) return ['running', 'Running']
   if (STOPPED.includes(row.status)) return ['stopped', row.status === 'failed' ? 'Failed' : 'Stopped']
   return ['done', row.status === 'partial' ? 'Done, partly reviewed' : 'Done']
@@ -460,6 +464,26 @@ export function scanPrompt(id, path) {
   return `Load the hermes-security:security-audit skill and run the existing security scan ${id} for ${path}. ` +
     'The scan is already started: read it with security_scan_get instead of starting a new one, then work through ' +
     'threat model, code review, validation and attack paths, and finish it with security_scan_finalize.'
+}
+export const continuePrompt = (id) => `Continue security scan ${id}. Read security_scan_get section next, then do that step.`
+// Ask the scan's own chat to pick up where the scan stopped. A chat the backend no
+// longer holds in memory is reopened from its saved id first.
+export async function continueInChat(id, session) {
+  const text = continuePrompt(id)
+  const stored = session?.storedSessionId || session?.sessionId
+  if (!stored) throw new Error('This scan is not linked to a chat yet.')
+  try {
+    await host.request('prompt.submit', { session_id: session.sessionId || stored, text })
+  } catch (error) {
+    const resumed = await host.request('session.resume', { session_id: stored })
+    const sessionId = resumed?.session_id
+    if (!sessionId) throw error
+    await host.request('prompt.submit', { session_id: sessionId, text })
+    if (sessionId !== session.sessionId) {
+      await request(`/scans/${id}/session`, { method: 'POST', body: { sessionId, storedSessionId: stored } })
+    }
+  }
+  host.notify?.({ kind: 'success', message: "Asked the scan's chat to continue." })
 }
 // Start the agent run in its own background chat session and link it to the scan.
 // Falls back to a chat draft when this backend can't create sessions.
@@ -794,6 +818,15 @@ export function ScanDetail({ id, onBack, onFinding }) {
       setChatError(e)
     }
   }
+  const resumeChat = async () => {
+    setChatError(null)
+    try {
+      await continueInChat(id, session)
+      await q.refetch()
+    } catch (e) {
+      setChatError(e)
+    }
+  }
   const stop = () => {
     if (session?.sessionId) host.request('session.interrupt', { session_id: session.sessionId }).catch(() => {})
     action.mutate({ path: `/scans/${id}/cancel`, expected: { status: 'canceled' } })
@@ -818,6 +851,7 @@ export function ScanDetail({ id, onBack, onFinding }) {
             ? jsx(Btn, { disabled: action.isPending, children: 'Resume',
                 onClick: () => action.mutate({ path: `/scans/${id}/resume`, expected: { status: ['running', 'awaiting_analysis', 'created'] } }) })
             : null,
+          active && session ? jsx(Btn, { onClick: resumeChat, children: 'Continue scan' }) : null,
           jsx(Btn, { onClick: openChat, children: session ? 'Open chat' : 'Run in chat' })
         ] })
       ] }),

@@ -57,7 +57,7 @@ const sdkModule = uri(`
 const e=globalThis.__securityTest;
 export const Button='button', Input='input', Textarea='textarea', Dialog='dialog', DialogContent='div', DialogHeader='header', DialogTitle='h2', DialogDescription='p', DialogFooter='footer';
 export const ROUTES_AREA='routes', SIDEBAR_NAV_AREA='sidebar.nav', PALETTE_AREA='palette';
-export const host={state:{profile:{get:()=>e.profile},connectionId:{get:()=>e.connectionId||null},focusedSessionOwner:{get:()=>e.owner||null},focusedStoredSessionId:{get:()=>null},activeSessionId:{get:()=>null}},notify:v=>e.notice=v,navigate:p=>e.navigation=p,openSession:async id=>e.session=id,request:async (method,params)=>{(e.rpc=e.rpc||[]).push([method,params]);if(e.noSessions)throw new Error('unsupported');return method==='session.create'?{session_id:'rt_1',stored_session_id:'st_1'}:{}},onEvent:(type,fn)=>{e.gatewayListener=fn;return ()=>{}},composer:{insertText:async (id,text,options)=>{e.draft={id,text,options};return e.draftReady}}};
+export const host={state:{profile:{get:()=>e.profile},connectionId:{get:()=>e.connectionId||null},focusedSessionOwner:{get:()=>e.owner||null},focusedStoredSessionId:{get:()=>null},activeSessionId:{get:()=>null}},notify:v=>e.notice=v,navigate:p=>e.navigation=p,openSession:async id=>e.session=id,request:async (method,params)=>{(e.rpc=e.rpc||[]).push([method,params]);if(e.noSessions)throw new Error('unsupported');if(e.rpcHandler)return e.rpcHandler(method,params);return method==='session.create'?{session_id:'rt_1',stored_session_id:'st_1'}:{}},onEvent:(type,fn)=>{e.gatewayListener=fn;return ()=>{}},composer:{insertText:async (id,text,options)=>{e.draft={id,text,options};return e.draftReady}}};
 export const queryClient={invalidateQueries:async v=>e.invalidations.push(v),removeQueries:v=>e.removed=v};
 export const useValue=atom=>atom.get();
 export const useQuery=options=>{e.queryOptions.push(options);return {data:options.enabled === false ? undefined : e.fixtures[options.queryKey[2]+'#'+(new URLSearchParams(options.queryKey[3]).get('section')||'')] || e.fixtures[options.queryKey[2]],isLoading:false,refetch:()=>options.queryFn()}};
@@ -562,4 +562,37 @@ test('scan/finding events invalidate and unload removes cache', () => {
   }
   env.dispose()
   assert.deepEqual(env.removed, { queryKey: ['hermes-security'] })
+})
+
+test('a paused open scan says why and continues in its own chat', async () => {
+  plugin.default.register(context)   // the previous test unloads the plugin
+  env.fixtures['/scans/scan_paused'] = {
+    scanId: 'scan_paused', status: 'awaiting_analysis', reason: 'paused: needs attention',
+    target: { root: '/remote/paused' }, options: { session: { sessionId: 'rt_1', storedSessionId: 'st_1' } }
+  }
+  env.fixtures['/scans/scan_paused#findings'] = { items: [], total: 0 }
+  const output = render(plugin.ScanDetail({ id: 'scan_paused', onBack() {}, onFinding() {} }))
+  assert.match(output, /Paused — needs attention/)
+  assert.doesNotMatch(output, /Running/)
+  const button = () => nodes(plugin.ScanDetail({ id: 'scan_paused', onBack() {}, onFinding() {} }))
+    .find((n) => n.type === 'button' && n.props.children === 'Continue scan')
+  env.rpc = []
+  await button().props.onClick()
+  assert.deepEqual(env.rpc, [['prompt.submit', { session_id: 'rt_1', text: plugin.continuePrompt('scan_paused') }]])
+  assert.match(plugin.continuePrompt('scan_paused'), /^Continue security scan scan_paused\. Read security_scan_get section next/)
+  // A chat the backend no longer holds is reopened from its saved id, then relinked.
+  env.rpc = []
+  env.rpcHandler = (method) => {
+    if (method === 'prompt.submit' && env.rpc.length === 1) throw new Error('session not found')
+    return method === 'session.resume' ? { session_id: 'rt_2' } : {}
+  }
+  await button().props.onClick()
+  delete env.rpcHandler
+  assert.deepEqual(env.rpc.map(([m, p]) => [m, p.session_id]), [['prompt.submit', 'rt_1'], ['session.resume', 'st_1'], ['prompt.submit', 'rt_2']])
+  assert.deepEqual(env.calls.filter((c) => c.path === '/scans/scan_paused/session').at(-1).options.body, { sessionId: 'rt_2', storedSessionId: 'st_1' })
+  // Finished or stopped scans offer no continue; running scans without the reason read as running.
+  env.fixtures['/scans/scan_paused'].reason = null
+  assert.match(render(plugin.ScanDetail({ id: 'scan_paused', onBack() {}, onFinding() {} })), /Running/)
+  env.fixtures['/scans/scan_paused'].status = 'canceled'
+  assert.equal(button(), undefined)
 })
