@@ -970,5 +970,32 @@ class SecurityStore:
             self._scan(c, scan_id, True)
             leases.release(c, scan_id, owner)
 
+    OPEN_STATUSES = ("created", "running", "awaiting_analysis", "finalizing")
+
+    def delete_scan(self, scan_id):
+        """Remove one stopped or finished scan and every row that belongs to it.
+
+        Triage is keyed by finding identity, which later scans of the same code share;
+        keep it while any remaining scan still reports that finding.
+        """
+        with self.transaction() as c:
+            scan = self._scan(c, scan_id)
+            if not scan["sealed_at"] and scan["status"] in self.OPEN_STATUSES:
+                raise Conflict("stop the scan before deleting it")
+            if c.execute("SELECT 1 FROM leases WHERE scan_id=? AND expires_at>?", (scan_id, time.time())).fetchone():
+                raise Conflict("scan has an active operation; retry later")
+            finding_ids = [r[0] for r in c.execute("SELECT DISTINCT finding_id FROM findings WHERE scan_id=?", (scan_id,))]
+            tables = [r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type='table'")
+                      if any(col[1] == "scan_id" for col in c.execute("PRAGMA table_info(" + r[0] + ")"))]
+            # Children first: candidates reference worker_attempts, everything references scans.
+            for table in sorted(tables, key=lambda t: (t == "scans", t == "worker_attempts")):
+                c.execute("DELETE FROM " + table + " WHERE scan_id=?", (scan_id,))
+            for finding_id in finding_ids:
+                c.execute("DELETE FROM triage WHERE finding_id=? AND NOT EXISTS(SELECT 1 FROM findings WHERE finding_id=?)",
+                          (finding_id, finding_id))
+            c.execute("DELETE FROM repositories WHERE repo_key=? AND NOT EXISTS(SELECT 1 FROM scans WHERE repo_key=?)",
+                      (scan["repo_key"], scan["repo_key"]))
+            return {"scanId": scan_id, "deleted": True, "findings": len(finding_ids)}
+
     def close(self):
         self._closed = True

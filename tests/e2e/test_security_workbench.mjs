@@ -136,7 +136,9 @@ test('start form matches the simple flow and launches the scan in a background c
   env.fixtures['/folders'] = { root: '/remote/repo', items: ['src', 'tests'] }
   const view = nodes(plugin.NewScan({ onClose() {} }))
   assert.deepEqual(view.filter((n) => n.type === 'button' && n.props['aria-pressed'] !== undefined).map((n) => n.props.children), ['Whole codebase', 'Only my changes'])
-  assert.deepEqual(view.filter((n) => n.type === 'option').map((n) => n.props.children), ['repo', 'Other folder…', 'Entire codebase', 'src/', 'tests/'])
+  assert.deepEqual(view.filter((n) => n.type === 'option').map((n) => n.props.children), ['repo', 'Entire codebase', 'src/', 'tests/', 'Same as my chats'])
+  // No advanced-delegation plugin: no subagent picker at all.
+  assert.equal(view.some((n) => n.props?.['aria-label'] === 'Subagents'), false)
   const text = render(plugin.NewScan({ onClose() {} }))
   for (const gone of [/Worker/, /Budget/, /Detectors/, /revision/i, /safety/i]) assert.doesNotMatch(text, gone)
   for (const shown of [/Deep scan/, /Run tests to confirm findings/, /Additional context/, /Scan area/]) assert.match(text, shown)
@@ -146,7 +148,7 @@ test('start form matches the simple flow and launches the scan in a background c
      { path: '/other/app', mode: 'deep', scope: ['src/**'], allow_tests: true, context: 'Billing app' }],
     [{ path: '/remote/repo', otherPath: '', changes: true, deep: true, tests: false, folder: 'src', context: '' }, { path: '/remote/repo', mode: 'diff' }]
   ]) {
-    env.states = [options, null, false]
+    env.states = [{ model: '', delegate: '', ...options }, null, false]
     env.rpc = []
     let started
     const start = nodes(plugin.NewScan({ onClose() {}, onStarted: (id) => { started = id } })).find((n) => n.type === 'button' && n.props.children === 'Start scan')
@@ -161,11 +163,59 @@ test('start form matches the simple flow and launches the scan in a background c
     delete env.states
   }
   env.noSessions = true
-  env.states = [{ path: '/remote/repo', otherPath: '', changes: false, deep: false, tests: false, folder: '', context: '' }, null, false]
+  env.states = [{ path: '/remote/repo', otherPath: '', changes: false, deep: false, tests: false, folder: '', context: '', model: '', delegate: '' }, null, false]
   await nodes(plugin.NewScan({})).find((n) => n.type === 'button' && n.props.children === 'Start scan').props.onClick()
   assert.match(env.draft.text, /hermes-security:security-audit.*scan_new/)
   delete env.noSessions
   delete env.states
+})
+
+test('the repository is picked by browsing folders on the gateway machine, not a typed path', async () => {
+  env.fixtures['/repositories'] = { items: [{ repoKey: 'r1', root: '/remote/repo' }], total: 1 }
+  env.fixtures['/folders'] = { root: '/remote/repo', items: ['src', 'tests'] }
+  env.fixtures['/browse'] = { path: '/remote', parent: '/', home: '/home/me', roots: ['/'],
+    items: [{ name: 'app', path: '/remote/app', repo: true }, { name: 'repo', path: '/remote/repo', repo: true }] }
+  const button = (view, label) => view.find((n) => n.type === 'button' && n.props.children === label)
+  const base = { path: '/remote/repo', otherPath: '', changes: false, deep: false, tests: false, folder: 'src', context: '', model: '', delegate: '' }
+  assert.equal(plugin.assertBackendPath('/browse?path=%2Fremote'), '/browse?path=%2Fremote')
+  env.stateWrites = []
+  try {
+    let view = nodes(plugin.NewScan({}))
+    assert.equal(view.some((n) => n.type === 'input' && n.props.type === 'text'), false)
+    assert.equal(view.some((n) => n.props.className === 'hs-browse'), false)
+    button(view, 'Browse…').props.onClick()
+    assert.deepEqual(env.stateWrites, ['browse'])
+    env.stateWrites = []
+    env.queryOptions.length = 0
+    env.states = [base, null, false, '', 'browse']
+    view = nodes(plugin.NewScan({}))
+    const listing = env.queryOptions.find((o) => o.queryKey[2] === '/browse')
+    assert.equal(new URLSearchParams(listing.queryKey[3]).get('path'), '/remote/repo')
+    const entries = view.filter((n) => n.props.className === 'hs-browse-item')
+    assert.deepEqual(entries.map((n) => n.props.children[0]), ['app', 'repo'])
+    entries[0].props.onClick()
+    button(view, 'Up').props.onClick()
+    assert.deepEqual(env.stateWrites, ['/remote/app', '/'])
+    env.stateWrites = []
+    button(view, 'Use this folder').props.onClick()
+    const next = env.stateWrites[0](base)
+    assert.deepEqual(next, { ...base, path: '__other', otherPath: '/remote', folder: '' })
+    assert.equal(env.stateWrites[1], null)
+    env.states = [next, null, false, '', null]
+    view = nodes(plugin.NewScan({}))
+    assert.deepEqual(view.filter((n) => n.type === 'option').map((n) => n.props.children), ['repo', 'remote', 'Entire codebase', 'src/', 'tests/', 'Same as my chats'])
+    assert.equal(view.find((n) => n.type === 'select').props.value, '__other')
+    // With no repository to offer, the browser is the only control and cannot be dismissed.
+    env.fixtures['/repositories'] = { items: [], total: 0 }
+    view = nodes(plugin.NewScan({}))
+    assert.equal(view.some((n) => n.type === 'select' && n.props['aria-label'] === 'Repository'), false)
+    assert.equal(view.some((n) => n.props.className === 'hs-browse'), true)
+    assert.equal(button(view, 'Cancel'), undefined)
+  } finally {
+    env.fixtures['/repositories'] = { items: [{ repoKey: 'r1', root: '/remote/repo' }], total: 1 }
+    delete env.stateWrites
+    delete env.states
+  }
 })
 
 test('app permission allow and stop buttons ask before sending requests', async () => {
@@ -256,6 +306,11 @@ test('only contract paths pass; traversal, external and authority routes fail', 
     '/findings/hsf_test/triage',
     '/findings/hsf_test/patch',
     '/repositories',
+    '/delegation',
+    '/clone',
+    '/clones',
+    '/finding-folders?repo=r1',
+    '/scans/scan_test/delete',
     '/exports/scan_test/md',
     '/exports/scan_test/sarif',
     '/exports/scan_test/json',
@@ -419,7 +474,8 @@ test('full page evaluates through SDK React shim and uses six-second queries', (
   for (const tab of ['Scans', 'Findings', 'New scan']) assert.match(output, new RegExp(tab))
   assert.doesNotMatch(output, /Repositories/)
   assert.match(output, /project/)
-  for (const q of env.queryOptions) assert.equal(q.refetchInterval, 6000)
+  // Scan state polls every six seconds; the model list is gateway inventory, cached for a minute.
+  for (const q of env.queryOptions) assert.equal(q.refetchInterval, q.queryKey[2] === 'model-options' ? undefined : 6000)
   assert.ok(env.queryOptions.some((q) => q.queryKey[2] === '/scans'))
 })
 test('legacy store projections normalize metadata without rewriting evidence', async () => {
@@ -620,4 +676,140 @@ test('a stalled open scan says so and why instead of waiting for the agent', () 
   env.fixtures['/scans/scan_stalled'].reason = null
   env.fixtures['/scans/scan_stalled'].stall = null
   assert.match(render(plugin.ScanDetail({ id: 'scan_stalled', onBack() {}, onFinding() {} })), /Running/)
+})
+
+test('model and subagent pickers reach the scan and its chat; subagents only with advanced-delegation', async () => {
+  env.fixtures['/repositories'] = { items: [{ repoKey: 'r1', root: '/remote/repo' }], total: 1 }
+  env.fixtures['model-options'] = { model: 'claude-opus-5-5', provider: 'anthropic', providers: [
+    { slug: 'anthropic', name: 'Anthropic', models: ['claude-opus-5-5', 'claude-sonnet-5-5'] },
+    { slug: 'openrouter', name: 'OpenRouter', models: ['x/fast'], authenticated: true },
+    { slug: 'nokey', name: 'No key', models: ['m'], authenticated: false }] }
+  env.fixtures['/delegation'] = { installed: true, backend: 'model_map', available: true, default: 'fast',
+    choices: [{ name: 'fast', description: 'Cheap and quick', detail: 'openrouter/x/fast' }, { name: 'deep', description: '', detail: '' }] }
+  try {
+    const view = nodes(plugin.NewScan({}))
+    const model = view.find((n) => n.props?.['aria-label'] === 'Model')
+    const groups = nodes(model.props.children).filter((n) => n.type === 'optgroup').map((n) => n.props.label)
+    assert.deepEqual(groups, ['Anthropic', 'OpenRouter'])
+    assert.match(render(model), /Same as my chats \(claude-opus-5-5\)/)
+    const routes = view.find((n) => n.props?.['aria-label'] === 'Subagents')
+    assert.deepEqual(nodes(routes.props.children).filter((n) => n.type === 'option').map((n) => n.props.value), ['', 'fast', 'deep'])
+    assert.match(render(routes), /Default \(fast\)/)
+    assert.match(render(routes), /fast · openrouter\/x\/fast — Cheap and quick/)
+    env.states = [{ path: '/remote/repo', otherPath: '', changes: false, deep: false, tests: false, folder: '', context: '',
+      model: JSON.stringify(['openrouter', 'x/fast']), delegate: 'deep' }, null, false]
+    env.rpc = []
+    await nodes(plugin.NewScan({})).find((n) => n.type === 'button' && n.props.children === 'Start scan').props.onClick()
+    const create = env.calls.filter((c) => c.path === '/scans').at(-1)
+    assert.deepEqual(create.options.body, { path: '/remote/repo', mode: 'standard', model: 'x/fast', provider: 'openrouter',
+      delegate: { backend: 'model_map', name: 'deep' } })
+    assert.deepEqual(env.rpc[0], ['session.create', { cwd: '/remote/repo', title: 'Security scan · repo', model: 'x/fast', provider: 'openrouter' }])
+    // Default model: the scan records it, the chat is created without a model override.
+    env.states = [{ path: '/remote/repo', otherPath: '', changes: false, deep: false, tests: false, folder: '', context: '', model: '', delegate: '' }, null, false]
+    env.rpc = []
+    await nodes(plugin.NewScan({})).find((n) => n.type === 'button' && n.props.children === 'Start scan').props.onClick()
+    assert.deepEqual(env.calls.filter((c) => c.path === '/scans').at(-1).options.body, { path: '/remote/repo', mode: 'standard', model: 'claude-opus-5-5' })
+    assert.deepEqual(env.rpc[0], ['session.create', { cwd: '/remote/repo', title: 'Security scan · repo' }])
+    env.fixtures['/delegation'] = { installed: true, backend: 'default', available: true, choices: [], default: null }
+    const off = nodes(plugin.NewScan({})).find((n) => n.props?.['aria-label'] === 'Subagents')
+    assert.equal(off.props.disabled, true)
+    assert.match(render(plugin.NewScan({})), /Turn on Model routes or Profile routes/)
+  } finally {
+    delete env.fixtures['model-options']
+    delete env.fixtures['/delegation']
+    delete env.states
+  }
+})
+
+test('a repository URL is cloned on the gateway and selected for the scan', async () => {
+  env.fixtures['/clone'] = { path: '/data/repos/github.com/owner/repo', url: 'https://github.com/owner/repo', action: 'cloned', revision: 'abc' }
+  env.stateWrites = []
+  try {
+    const button = (view, label) => view.find((n) => n.type === 'button' && n.props.children === label)
+    button(nodes(plugin.NewScan({})), 'From URL…').props.onClick()
+    assert.deepEqual(env.stateWrites, ['clone'])
+    env.states = [{ path: '/remote/repo', otherPath: '', changes: false, deep: false, tests: false, folder: '', context: '', model: '', delegate: '' }, null, false, '', 'clone']
+    const view = nodes(plugin.NewScan({}))
+    assert.ok(view.some((n) => n.props?.['aria-label'] === 'Repository URL'))
+    let picked
+    env.states = [' owner/repo ', false, null]
+    await button(nodes(plugin.CloneRepo({ onCloned: (r) => { picked = r } })), 'Clone').props.onClick()
+    assert.deepEqual(env.calls.at(-1), { path: '/clone', options: { timeoutMs: 660000, method: 'POST', body: { url: 'owner/repo' } } })
+    assert.equal(picked.path, '/data/repos/github.com/owner/repo')
+    env.error = new Error(JSON.stringify({ error: { code: 'clone_failed', message: 'Could not clone the repository: fatal: repository not found' } }))
+    env.stateWrites = []
+    env.states = ['https://github.com/o/missing', false, null]
+    await button(nodes(plugin.CloneRepo({ onCloned: () => assert.fail('no success') })), 'Clone').props.onClick()
+    assert.match(env.stateWrites.find((w) => w instanceof Error).message, /repository not found/)
+  } finally {
+    delete env.error
+    delete env.states
+    delete env.stateWrites
+    delete env.fixtures['/clone']
+  }
+})
+
+test('delete asks first, only offers stopped or finished scans, and reads back the deletion', async () => {
+  const before = env.calls.length
+  globalThis.window = { confirm: () => false }
+  try {
+    assert.equal(await plugin.deleteScan('scan_test', 'project'), null)
+    assert.equal(env.calls.length, before)
+    window.confirm = (message) => /Delete this scan of project\?.*cannot be undone/.test(message)
+    env.response = { scanId: 'scan_test', deleted: true, findings: 2 }
+    assert.equal((await plugin.deleteScan('scan_test', 'project')).deleted, true)
+    assert.deepEqual(env.calls.at(-1), { path: '/scans/scan_test/delete', options: { timeoutMs: 15000, method: 'POST', body: { confirm: 'scan_test' } } })
+    env.response = { scanId: 'scan_test' }
+    await assert.rejects(plugin.deleteScan('scan_test', 'project'), /did not confirm/)
+  } finally {
+    delete env.response
+    delete globalThis.window
+  }
+  const labels = (status) => {
+    env.fixtures['/scans/scan_test'].status = status
+    return nodes(plugin.ScanDetail({ id: 'scan_test' })).filter((n) => n.type === 'button').map((n) => n.props.children)
+  }
+  try {
+    assert.equal(labels('awaiting_analysis').includes('Delete'), false)
+    assert.equal(labels('canceled').includes('Delete'), true)
+    assert.equal(labels('completed').includes('Delete'), true)
+  } finally {
+    env.fixtures['/scans/scan_test'].status = 'awaiting_analysis'
+  }
+})
+
+test('findings filter by repository and folder; scans by repository', () => {
+  env.fixtures['/repositories'] = { items: [{ repoKey: 'r1', root: '/remote/repo' }, { repoKey: 'r2', root: '/remote/app' }], total: 2 }
+  env.fixtures['/finding-folders'] = { items: [{ folder: 'src', count: 3 }, { folder: 'src/api', count: 2 }], total: 2 }
+  env.stateWrites = []
+  env.queryOptions.length = 0
+  try {
+    const props = { selected: 'x', setSelected() {}, newScan: false, setNewScan() {} }
+    let view = nodes(plugin.BrowserView({ kind: 'Findings', ...props }))
+    const repo = view.find((n) => n.props?.['aria-label'] === 'Repository')
+    const folder = view.find((n) => n.props?.['aria-label'] === 'Folder')
+    assert.deepEqual(nodes(repo.props.children).map((n) => n.props.children), ['All repositories', 'repo', 'app'])
+    assert.deepEqual(nodes(folder.props.children).map((n) => n.props.children), ['All folders', 'src/ (3)', 'src/api/ (2)'])
+    repo.props.onChange({ target: { value: 'r2' } })
+    assert.deepEqual(env.stateWrites[0]({ q: '', status: 'open', folder: 'src' }), { q: '', status: 'open', repo: 'r2', folder: '' })
+    env.stateWrites = []
+    folder.props.onChange({ target: { value: 'src/api' } })
+    assert.deepEqual(env.stateWrites[0]({ q: '' }), { q: '', folder: 'src/api' })
+    env.queryOptions.length = 0
+    env.states = [{ q: '', status: 'open', severity: '', repo: 'r2', folder: 'src/api' }, 0]
+    nodes(plugin.BrowserView({ kind: 'Findings', ...props }))
+    const list = env.queryOptions.find((o) => o.queryKey[2] === '/findings')
+    assert.equal(new URLSearchParams(list.queryKey[3]).get('repo'), 'r2')
+    assert.equal(new URLSearchParams(list.queryKey[3]).get('folder'), 'src/api')
+    assert.equal(new URLSearchParams(env.queryOptions.find((o) => o.queryKey[2] === '/finding-folders').queryKey[3]).get('repo'), 'r2')
+    env.states = [{ q: '' }, 0]
+    view = nodes(plugin.BrowserView({ kind: 'Scans', ...props }))
+    assert.ok(view.some((n) => n.props?.['aria-label'] === 'Repository'))
+    assert.equal(view.some((n) => n.props?.['aria-label'] === 'Folder'), false)
+  } finally {
+    env.fixtures['/repositories'] = { items: [{ repoKey: 'r1', root: '/remote/repo' }], total: 1 }
+    delete env.fixtures['/finding-folders']
+    delete env.states
+    delete env.stateWrites
+  }
 })

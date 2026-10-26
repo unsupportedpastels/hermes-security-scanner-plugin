@@ -42,6 +42,22 @@ def test_empty_workbench_reads_succeed(api):
         assert response.json()['items'] == []
 
 
+def test_browse_lists_folders_on_the_gateway_machine(api, tmp_path):
+    module, client = api
+    base = tmp_path / 'browse'
+    (base / 'b-repo' / '.git').mkdir(parents=True)
+    (base / 'A-dir').mkdir(); (base / '.hidden').mkdir(); (base / 'file.txt').write_text('x')
+    body = client.get(PREFIX + '/browse', params={'path': str(base)}).json()
+    assert body['path'] == str(base.resolve())
+    assert body['parent'] == str(base.resolve().parent)
+    assert body['repo'] is False and body['roots']
+    assert [(i['name'], i['repo']) for i in body['items']] == [('A-dir', False), ('b-repo', True)]
+    assert body['items'][1]['path'] == str(base.resolve() / 'b-repo')
+    assert client.get(PREFIX + '/browse').json()['path'] == str(Path.home().resolve())
+    for missing in [base / 'file.txt', base / 'nope']:
+        assert client.get(PREFIX + '/browse', params={'path': str(missing)}).status_code == 400
+
+
 def test_standalone_health_and_real_scan(api, tmp_path):
     module, client = api
     assert client.get(PREFIX + '/health').json() == {'ok': True, 'plugin': 'hermes-security'}
@@ -465,3 +481,107 @@ def test_summary_counts_open_findings_by_severity(populated):
     assert before >= 1
     assert client.post(PREFIX + '/findings/' + fid + '/triage', json={'state': 'closed', 'note': ''}).status_code == 200
     assert client.get(PREFIX + '/summary').json()['open'].get(level, 0) == before - 1
+
+
+def test_delete_scan_requires_consent_and_a_stopped_scan(populated):
+    module, client, root, sid, fid, secret = populated
+    service = module.get_service()
+    assert client.post(PREFIX + '/findings/' + fid + '/triage', json={'state': 'closed', 'note': 'done'}).status_code == 200
+    open_sid = client.post(PREFIX + '/scans', json={'path': str(root)}).json()['scanId']
+    assert client.post(PREFIX + f'/scans/{open_sid}/delete', json={}).status_code == 400
+    assert client.post(PREFIX + f'/scans/{open_sid}/delete', json={'confirm': sid}).status_code == 400
+    assert client.post(PREFIX + f'/scans/{open_sid}/delete', json={'confirm': open_sid}).status_code == 409
+    assert client.post(PREFIX + f'/scans/{open_sid}/cancel').status_code == 200
+    assert client.post(PREFIX + f'/scans/{open_sid}/delete', json={'confirm': open_sid}).json()['deleted'] is True
+    assert client.get(PREFIX + '/scans/' + open_sid).status_code == 404
+    directory = module.importlib.import_module('.store.artifacts', module._PACKAGE_NAME).scan_dir(service.data_dir, sid)
+    assert directory.exists()
+    result = client.post(PREFIX + f'/scans/{sid}/delete', json={'confirm': sid}).json()
+    assert result['deleted'] is True and result['findings'] >= 1 and 'filesLeft' not in result
+    assert not directory.exists()
+    assert client.get(PREFIX + '/findings').json()['total'] == 0
+    assert client.get(PREFIX + '/summary').json()['scans'] == 0
+    assert client.get(PREFIX + '/repositories').json()['total'] == 0
+    with service.store._connection() as conn:
+        assert conn.execute('SELECT count(*) FROM triage').fetchone()[0] == 0
+        for table in ('events', 'inventory_files', 'worker_attempts', 'candidates', 'seals', 'snapshots'):
+            assert conn.execute('SELECT count(*) FROM ' + table).fetchone()[0] == 0, table
+
+
+def test_delete_keeps_triage_a_remaining_scan_still_reports(populated, tmp_path):
+    module, client, root, sid, fid, secret = populated
+    service = module.get_service()
+    spec = importlib.util.spec_from_file_location('security_acceptance_helpers', ROOT / 'tests/integration/test_end_to_end_static.py')
+    helpers = importlib.util.module_from_spec(spec); spec.loader.exec_module(helpers)
+    plan = service.start_scan(path=str(root))
+    candidate = helpers.candidate_for(root); candidate['evidenceState'] = 'source_supported'
+    service.submit_worker_result(helpers.worker(plan, [candidate], attempt='att_second'))
+    service.finalize(plan['scanId'])
+    assert client.post(PREFIX + '/findings/' + fid + '/triage', json={'state': 'accepted_risk', 'note': ''}).status_code == 200
+    assert client.post(PREFIX + f'/scans/{sid}/delete', json={'confirm': sid}).status_code == 200
+    assert client.get(PREFIX + '/findings/' + fid).json()['triage']['state'] == 'accepted_risk'
+
+
+def test_repository_and_folder_filters(populated, tmp_path):
+    module, client, root, sid, fid, secret = populated
+    other = tmp_path / 'other'; (other / 'lib').mkdir(parents=True); (other / 'lib' / 'x.py').write_text('x = 1\n')
+    client.post(PREFIX + '/scans', json={'path': str(other)})
+    repos = {r['root']: r['repo_key'] for r in client.get(PREFIX + '/repositories').json()['items']}
+    key = repos[str(root.resolve())]
+    rows = client.get(PREFIX + '/scans', params={'repo': key}).json()
+    assert rows['total'] == 1 and rows['items'][0]['scan_id'] == sid
+    assert client.get(PREFIX + '/scans', params={'repo': repos[str(other.resolve())]}).json()['total'] == 1
+    service = module.get_service()
+    with service.store._connection() as conn:
+        conn.execute("UPDATE findings SET path='src/api/app.py'")
+    folders = client.get(PREFIX + '/finding-folders', params={'repo': key}).json()['items']
+    assert [(f['folder'], f['count']) for f in folders] == [('src', 1), ('src/api', 1)]
+    assert client.get(PREFIX + '/finding-folders', params={'repo': 'nope'}).json()['items'] == []
+    for folder, total in [('src', 1), ('src/api', 1), ('src/', 1), ('sr', 0), ('src/a', 0), ('lib', 0)]:
+        assert client.get(PREFIX + '/findings', params={'folder': folder}).json()['total'] == total, folder
+
+
+def test_clone_rejects_unsafe_addresses_with_a_readable_message(api, tmp_path):
+    module, client = api
+    clone = module.importlib.import_module('.target.clone', module._PACKAGE_NAME)
+    assert clone.parse_url('owner/repo') == ('https://github.com/owner/repo', 'github.com', ['owner', 'repo'])
+    assert clone.parse_url('git@gitlab.com:team/app.git')[1:] == ('gitlab.com', ['team', 'app'])
+    assert clone.parse_url('https://example.com/a/b/c.git')[2] == ['a', 'b', 'c']
+    # One repository however it is written, so asking again updates the earlier clone.
+    assert clone._identity('owner/repo') == clone._identity('https://github.com/owner/repo.git') == clone._identity('git@github.com:Owner/Repo.git')
+    assert clone._identity('owner/repo') != clone._identity('https://gitlab.com/owner/repo')
+    for bad in ['file:///etc', 'C:/repo', '/tmp/repo', '--upload-pack=x', 'ext::sh -c id', 'https://user:pw@github.com/o/r',
+                'https://github.com/', 'https://github.com/o/..', 'ftp://example.com/o/r', '']:
+        with pytest.raises(clone.CloneError):
+            clone.parse_url(bad)
+    response = client.post(PREFIX + '/clone', json={'url': 'file:///etc/passwd'})
+    assert response.status_code == 400
+    assert response.json()['error']['code'] == 'clone_failed' and 'https://' in response.json()['error']['message']
+    assert client.post(PREFIX + '/clone', json={'url': 'o/r', 'extra': 1}).status_code == 400
+    assert client.get(PREFIX + '/clones').json() == {'items': []}
+    service = module.get_service()
+    (service.data_dir / 'repos' / 'github.com' / 'o' / 'r' / '.git').mkdir(parents=True)
+    (service.data_dir / 'repos' / 'github.com' / 'o' / 'r.partial-1234' / '.git').mkdir(parents=True)
+    assert client.get(PREFIX + '/clones').json()['items'] == [{'path': str(service.data_dir / 'repos' / 'github.com' / 'o' / 'r'), 'name': 'o/r'}]
+
+
+def test_scan_subagent_route_is_checked_and_reaches_the_agent(api, tmp_path, monkeypatch):
+    module, client = api
+    routes = {'installed': True, 'backend': 'model_map', 'available': True, 'default': 'fast',
+              'choices': [{'name': 'fast', 'description': 'Cheap', 'detail': 'openrouter/x'}]}
+    monkeypatch.setattr(module, '_delegation_info', lambda: routes)
+    assert client.get(PREFIX + '/delegation').json() == routes
+    root = tmp_path / 'repo'; root.mkdir(); (root / 'a.py').write_text('x = 1\n')
+    for bad in [{'backend': 'model_map', 'name': 'deep'}, {'backend': 'profile_routes', 'name': 'fast'}, 'fast']:
+        assert client.post(PREFIX + '/scans', json={'path': str(root), 'delegate': bad}).status_code == 400, bad
+    scan = client.post(PREFIX + '/scans', json={'path': str(root), 'delegate': {'backend': 'model_map', 'name': 'fast'}}).json()
+    assert scan['options']['delegate'] == {'backend': 'model_map', 'name': 'fast'}
+    step = client.get(PREFIX + '/scans/' + scan['scanId'], params={'section': 'next'}).json()
+    assert step['step'] == 'dispatch' and step['delegate']['name'] == 'fast'
+    assert 'Set "option": "fast" on every delegate_task task' in step['how']
+    summary = client.get(PREFIX + '/scans/' + scan['scanId'], params={'section': 'summary'}).json()
+    assert summary['delegate'] == {'backend': 'model_map', 'name': 'fast'}
+    monkeypatch.setattr(module, '_delegation_info', lambda: {**routes, 'installed': False})
+    assert client.post(PREFIX + '/scans', json={'path': str(root), 'delegate': {'backend': 'model_map', 'name': 'fast'}}).status_code == 400
+    plain = client.post(PREFIX + '/scans', json={'path': str(root)}).json()
+    assert 'delegate' not in client.get(PREFIX + '/scans/' + plain['scanId'], params={'section': 'next'}).json()

@@ -48,8 +48,8 @@ export function queryKey(profile, path, filters = {}, connectionId = null) {
 export function assertBackendPath(path) {
   const base = path.split('?')[0]
   if (
-    !/^\/(summary|scans|findings|repositories|folders)$/.test(base) &&
-    !/^\/scans\/[\w-]+(?:\/(cancel|resume|activity|coverage|grants|authorize-validation|run-validation|session))?$/.test(base) &&
+    !/^\/(summary|scans|findings|repositories|folders|browse|delegation|clone|clones|finding-folders)$/.test(base) &&
+    !/^\/scans\/[\w-]+(?:\/(cancel|resume|delete|activity|coverage|grants|authorize-validation|run-validation|session))?$/.test(base) &&
     !/^\/scans\/[\w-]+\/grants\/[\w-]+\/revoke$/.test(base) &&
     !/^\/findings\/[\w-]+(?:\/(triage|patch))?$/.test(base) &&
     !/^\/exports\/[\w-]+\/(md|sarif|json|csv)$/.test(base)
@@ -296,6 +296,9 @@ details.hs-fold[open]>summary{margin-bottom:8px;border-bottom:1px solid var(--ui
 .hs-q{display:flex;flex-direction:column;gap:6px;min-width:0}.hs-q>span{font-weight:500}.hs-q>small{color:var(--ui-text-tertiary)}
 .hs-q select,.hs-q input[type=text],.hs-q textarea{width:100%;min-width:0;padding:7px 9px;border:1px solid var(--ui-stroke-secondary);border-radius:7px;background:transparent;color:var(--foreground);font:inherit}
 .hs-q select option{background:var(--background)}.hs-q textarea{min-height:72px;resize:vertical}
+.hs-browse{display:flex;flex-direction:column;gap:8px;padding:10px;border:1px solid var(--ui-stroke-secondary);border-radius:8px}.hs-browse-path{flex:1;min-width:0;overflow-wrap:anywhere;font-size:12px;color:var(--ui-text-tertiary)}
+.hs-browse-list{display:flex;flex-direction:column;max-height:240px;overflow:auto}.hs-browse-list>small{padding:5px 8px;color:var(--ui-text-tertiary)}
+.hs-browse-item{display:flex;justify-content:space-between;gap:8px;padding:5px 8px;border:0;border-radius:6px;background:transparent;color:var(--foreground);font:inherit;text-align:left;cursor:pointer}.hs-browse-item:hover{background:color-mix(in srgb,var(--foreground) 8%,transparent)}.hs-browse-item small{color:var(--ui-text-tertiary)}
 .hs-pills{display:flex;gap:6px;flex-wrap:wrap}
 .hs-pill{border:1px solid var(--ui-stroke-secondary);border-radius:999px;padding:5px 14px;font:inherit;cursor:pointer;color:var(--ui-text-secondary);background:transparent}
 .hs-pill[aria-pressed=true]{color:var(--foreground);border-color:var(--ui-accent);background:color-mix(in srgb,var(--ui-accent) 15%,transparent)}
@@ -491,10 +494,14 @@ export async function continueInChat(id, session) {
 }
 // Start the agent run in its own background chat session and link it to the scan.
 // Falls back to a chat draft when this backend can't create sessions.
-export async function launchScan(id, path) {
+// `route` = { model, provider } picked on the form; omitted = the profile's default model.
+export async function launchScan(id, path, route = {}) {
   const prompt = scanPrompt(id, path)
   try {
-    const session = await host.request('session.create', { cwd: path, title: `Security scan · ${repoName(path)}` })
+    const session = await host.request('session.create', {
+      cwd: path, title: `Security scan · ${repoName(path)}`,
+      ...(route.model ? { model: route.model, ...(route.provider ? { provider: route.provider } : {}) } : {})
+    })
     const sessionId = session?.session_id
     if (!sessionId) throw new Error('no session')
     await host.request('prompt.submit', { session_id: sessionId, text: prompt })
@@ -511,32 +518,129 @@ function Opt({ title, hint, checked, onChange }) {
     jsxs('span', { children: [jsx('b', { children: title }), jsx('small', { children: hint })] })
   ] })
 }
+// Lists folders through the backend, so they are on the gateway's machine (where
+// the scan reads them), not on the computer running the desktop app.
+export function FolderBrowser({ start, onPick, onCancel }) {
+  const [at, setAt] = useState(start || '')
+  const listing = useData('/browse', at ? { path: at } : {})
+  const data = listing.data || {}
+  const roots = list(data.roots)
+  return jsxs('div', { className: 'hs-browse', role: 'group', 'aria-label': 'Choose a repository folder', children: [
+    jsxs('div', { className: 'hs-actions', children: [
+      jsx(Btn, { disabled: !data.parent, onClick: () => setAt(data.parent), children: 'Up' }),
+      jsx(Btn, { disabled: !data.home, onClick: () => setAt(data.home), children: 'Home' }),
+      ...(roots.length > 1 ? roots.map((root) => jsx(Btn, { onClick: () => setAt(root), children: root }, root)) : []),
+      jsx('code', { className: 'hs-browse-path', children: data.path || at || 'Loading…' })
+    ] }),
+    jsx('div', { className: 'hs-browse-list', children: listing.error
+      ? jsx('small', { role: 'alert', children: errorText(listing.error) })
+      : list(data.items).length
+        ? data.items.map((item) => jsxs('button', { type: 'button', className: 'hs-browse-item', onClick: () => setAt(item.path),
+            children: [item.name, item.repo ? jsx('small', { children: 'git' }) : null] }, item.path))
+        : jsx('small', { children: listing.isLoading ? 'Loading…' : 'No folders here' }) }),
+    jsxs('div', { className: 'hs-actions', children: [
+      jsx('button', { type: 'button', className: 'hs-cta', disabled: !data.path, onClick: () => onPick(data.path), children: 'Use this folder' }),
+      onCancel ? jsx(Btn, { onClick: onCancel, children: 'Cancel' }) : null
+    ] })
+  ] })
+}
+// Clones (or updates) a repository on the gateway's machine, so it can be scanned without a folder.
+export function CloneRepo({ onCloned, onCancel }) {
+  const [url, setUrl] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState(null)
+  const submit = async () => {
+    if (!url.trim() || busy) return
+    setBusy(true)
+    setError(null)
+    try {
+      // Large repositories can take minutes; the backend gives up after 10.
+      const result = await request('/clone', { method: 'POST', body: { url: url.trim() }, timeoutMs: 660000 })
+      if (!result?.path) throw new Error('The repository was not saved. Try again.')
+      onCloned(result)
+    } catch (e) {
+      setError(e)
+    } finally {
+      setBusy(false)
+    }
+  }
+  return jsxs('div', { className: 'hs-browse', role: 'group', 'aria-label': 'Clone a repository', children: [
+    jsxs('div', { className: 'hs-actions', children: [
+      jsx('input', { type: 'text', className: 'hs-mini', style: { flex: 1 }, 'aria-label': 'Repository URL', value: url, disabled: busy,
+        placeholder: 'https://github.com/owner/repo', onChange: (e) => setUrl(e.target.value),
+        onKeyDown: (e) => { if (e.key === 'Enter') submit() } }),
+      jsx('button', { type: 'button', className: 'hs-cta', disabled: busy || !url.trim(), onClick: submit, children: busy ? 'Cloning…' : 'Clone' }),
+      onCancel ? jsx(Btn, { disabled: busy, onClick: onCancel, children: 'Cancel' }) : null
+    ] }),
+    jsx('small', { className: 'hs-muted', children: 'Hermes downloads the code to its own folder and scans that copy. Private repositories use the Git sign-in already saved on this computer.' }),
+    error ? jsx('div', { role: 'alert', className: 'hs-alert hs-error', children: errorText(error) }) : null
+  ] })
+}
+// Models the gateway can run, for the scan's own chat. Empty value = the profile's default.
+function useModelChoices() {
+  const profile = useValue(host.state.profile)
+  const connectionId = useValue(host.state.connectionId)
+  return useQuery({
+    queryKey: [ID, profile, 'model-options', connectionId],
+    queryFn: () => host.request('model.options', {}),
+    staleTime: 60000,
+    retry: false
+  })
+}
+export function modelGroups(options) {
+  return list(options?.providers)
+    .filter((p) => p && p.authenticated !== false && list(p.models).length)
+    .map((p) => ({ slug: p.slug, name: p.name || p.slug, models: list(p.models).filter((m) => !list(p.unavailable_models).includes(m)) }))
+    .filter((p) => p.models.length)
+}
 export function NewScan({ onClose, onStarted }) {
   const repos = useData('/repositories', { limit: 100, offset: 0 })
+  const clones = useData('/clones')
+  const delegation = useData('/delegation')
+  const models = useModelChoices()
   const cwd = host.state.cwd?.get?.() || ''
-  const model = host.state.model?.get?.() || ''
-  const known = [...new Set([...items(repos.data).map(pathOf), cwd].filter((p) => p && p !== 'Target not recorded'))]
-  const [options, setOptions] = useState({ path: '', otherPath: '', changes: false, deep: false, tests: false, folder: '', context: '' })
+  const currentModel = host.state.model?.get?.() || models.data?.model || ''
+  const known = [...new Set([...items(repos.data).map(pathOf), ...items(clones.data).map((c) => c.path), cwd]
+    .filter((p) => p && p !== 'Target not recorded'))]
+  const [options, setOptions] = useState({ path: '', otherPath: '', changes: false, deep: false, tests: false, folder: '', context: '', model: '', delegate: '' })
   const [error, setError] = useState(null)
   const [busy, setBusy] = useState(false)
+  const [notice, setNotice] = useState('')
   const set = (key) => (value) => setOptions((previous) => ({ ...previous, [key]: value }))
   const path = (options.path === '__other' ? options.otherPath : options.path || known[0] || '').trim()
   const folders = useData('/folders', { path }, !!path)
+  const [adding, setAdding] = useState(null) // null | 'browse' | 'clone'
+  const choices = known.map((p) => [p, repoName(p)])
+  if (options.otherPath.trim() && !known.includes(options.otherPath.trim())) choices.push(['__other', repoName(options.otherPath)])
+  const pick = (picked) => {
+    setOptions((previous) => ({ ...previous, path: '__other', otherPath: picked, folder: '' }))
+    setAdding(null)
+  }
+  const cloned = (result) => {
+    pick(result.path)
+    setNotice(result.message || `${result.action === 'updated' ? 'Updated' : 'Cloned'} ${repoName(result.path)}. It is selected below.`)
+    queryClient.invalidateQueries({ queryKey: [ID] })
+  }
+  const groups = modelGroups(models.data)
+  const routes = delegation.data || {}
+  const routeChoices = list(routes.choices)
   const start = async () => {
     setBusy(true)
     setError(null)
     try {
+      const [provider, model] = options.model ? JSON.parse(options.model) : ['', '']
       const body = {
         path,
         mode: options.changes ? 'diff' : options.deep ? 'deep' : 'standard',
         ...(!options.changes && options.folder ? { scope: [options.folder + '/**'] } : {}),
         ...(options.tests ? { allow_tests: true } : {}),
         ...(options.context.trim() ? { context: options.context.trim() } : {}),
-        ...(model ? { model: String(model) } : {})
+        ...(model ? { model, provider } : currentModel ? { model: String(currentModel) } : {}),
+        ...(options.delegate && routes.installed ? { delegate: { backend: routes.backend, name: options.delegate } } : {})
       }
       const created = await change('/scans', body)
       if (!created.scanId) throw new Error('The scan was not created. Try again.')
-      const run = await launchScan(created.scanId, path)
+      const run = await launchScan(created.scanId, path, model ? { model, provider } : {})
       if (!run.background) host.notify({ kind: 'info', message: 'Send the drafted message in chat to run the scan.' })
       onStarted?.(created.scanId)
     } catch (e) {
@@ -554,19 +658,24 @@ export function NewScan({ onClose, onStarted }) {
       onClose ? jsx('div', { className: 'hs-actions', children: jsx(Btn, { onClick: onClose, children: 'Cancel' }) }) : null
     ] }),
     jsxs('div', { className: 'hs-form', children: [
-      jsxs('label', { className: 'hs-q', children: [
+      jsxs('div', { className: 'hs-q', children: [
         jsx('span', { children: 'Repository' }),
-        jsx('select', { 'aria-label': 'Repository', value: options.path || known[0] || '__other',
-          onChange: (e) => { set('path')(e.target.value); set('folder')('') },
-          children: [...known.map((p) => [p, repoName(p)]), ['__other', 'Other folder…']].map(([v, t]) => jsx('option', { value: v, children: t }, v)) })
+        jsxs('div', { className: 'hs-actions', children: [
+          choices.length
+            ? jsx('select', { 'aria-label': 'Repository', style: { flex: 1 }, value: options.path || known[0] || '__other',
+                onChange: (e) => { set('path')(e.target.value); set('folder')('') },
+                children: choices.map(([v, t]) => jsx('option', { value: v, title: v === '__other' ? options.otherPath : v, children: t }, v)) })
+            : null,
+          jsx(Btn, { 'aria-expanded': adding === 'browse', onClick: () => setAdding(adding === 'browse' ? null : 'browse'), children: 'Browse…' }),
+          jsx(Btn, { 'aria-expanded': adding === 'clone', onClick: () => setAdding(adding === 'clone' ? null : 'clone'), children: 'From URL…' })
+        ] }),
+        adding === 'clone'
+          ? jsx(CloneRepo, { onCloned: cloned, onCancel: () => setAdding(null) })
+          : adding === 'browse' || !choices.length
+            ? jsx(FolderBrowser, { start: path, onPick: pick, onCancel: choices.length ? () => setAdding(null) : null })
+            : null,
+        notice ? jsx('small', { role: 'status', children: notice }) : null
       ] }),
-      options.path === '__other' || !known.length
-        ? jsxs('label', { className: 'hs-q', children: [
-            jsx('span', { children: 'Folder path' }),
-            jsx('input', { type: 'text', value: options.otherPath, autoFocus: true, placeholder: 'C:\\code\\my-app or /home/me/my-app',
-              onChange: (e) => set('otherPath')(e.target.value) })
-          ] })
-        : null,
       jsxs('div', { className: 'hs-q', role: 'group', 'aria-label': 'What to scan', children: [
         jsx('span', { children: 'What to scan' }),
         jsx('div', { className: 'hs-pills', children: [['full', 'Whole codebase'], ['changes', 'Only my changes']].map(([key, title]) =>
@@ -586,6 +695,30 @@ export function NewScan({ onClose, onStarted }) {
         options.changes ? null : jsx(Opt, { title: 'Deep scan', hint: 'Slower, but looks harder for subtle issues', checked: options.deep, onChange: set('deep') }),
         jsx(Opt, { title: 'Run tests to confirm findings', hint: 'Runs small tests from this repo on this computer, in a temporary copy', checked: options.tests, onChange: set('tests') })
       ] }),
+      jsxs('label', { className: 'hs-q', children: [
+        jsx('span', { children: 'Model' }),
+        jsx('select', { 'aria-label': 'Model', value: options.model, onChange: (e) => set('model')(e.target.value), children: [
+          jsx('option', { value: '', children: currentModel ? `Same as my chats (${currentModel})` : 'Same as my chats' }, ''),
+          ...groups.map((g) => jsx('optgroup', { label: g.name, children: g.models.map((m) =>
+            jsx('option', { value: JSON.stringify([g.slug, m]), children: m }, m)) }, g.slug))
+        ] }),
+        jsx('small', { children: models.error ? 'The model list could not be loaded, so the scan uses your default model.'
+          : routes.installed ? 'Runs the scan’s chat. Pick the subagents’ route below.' : 'Runs the scan’s chat. Subagents follow your delegation settings.' })
+      ] }),
+      routes.installed
+        ? jsxs('label', { className: 'hs-q', children: [
+            jsx('span', { children: 'Subagents' }),
+            jsx('select', { 'aria-label': 'Subagents', value: options.delegate, disabled: !routeChoices.length,
+              onChange: (e) => set('delegate')(e.target.value), children: [
+                jsx('option', { value: '', children: routes.default ? `Default (${routes.default})` : 'Let the agent choose' }, ''),
+                ...routeChoices.map((c) => jsx('option', { value: c.name,
+                  children: `${c.name}${c.detail ? ' · ' + c.detail : ''}${c.description ? ' — ' + c.description : ''}` }, c.name))
+              ] }),
+            jsx('small', { children: routeChoices.length
+              ? (routes.backend === 'profile_routes' ? 'Every reviewer runs as this Hermes profile.' : 'Every reviewer runs on this model route.')
+              : 'Turn on Model routes or Profile routes (hermes delegation config) to pick one here.' })
+          ] })
+        : null,
       jsxs('label', { className: 'hs-q', children: [
         jsx('span', { children: 'Additional context' }),
         jsx('small', { children: 'Optional. What the app does, what worries you, where to look first.' }),
@@ -806,7 +939,13 @@ export function findingSummary(scan, progress) {
   return progress?.phase === 'done' ? 'No findings' : 'Findings still coming in'
 }
 const GROUPS = [...SEVERITIES, 'unknown']
-export function ScanDetail({ id, onBack, onFinding }) {
+export async function deleteScan(id, name) {
+  if (!window.confirm(`Delete this scan of ${name}? Its findings, notes and downloads are removed. This cannot be undone.`)) return null
+  const saved = readback(await request(`/scans/${id}/delete`, { method: 'POST', body: { confirm: id } }), { scanId: id, deleted: true })
+  await queryClient.invalidateQueries({ queryKey: [ID] })
+  return saved
+}
+export function ScanDetail({ id, onBack, onFinding, onDeleted }) {
   const q = useData(`/scans/${id}`)
   const coverage = useData(`/scans/${id}/coverage`)
   const [offset, setOffset] = useState(0)
@@ -844,6 +983,19 @@ export function ScanDetail({ id, onBack, onFinding }) {
     if (session?.sessionId) host.request('session.interrupt', { session_id: session.sessionId }).catch(() => {})
     action.mutate({ path: `/scans/${id}/cancel`, expected: { status: 'canceled' } })
   }
+  const [deleting, setDeleting] = useState(false)
+  const remove = async () => {
+    setChatError(null)
+    setDeleting(true)
+    try {
+      if (await deleteScan(id, repoName(pathOf(scan)))) onDeleted?.(id)
+    } catch (e) {
+      setChatError(e)
+    } finally {
+      setDeleting(false)
+    }
+  }
+  const delegate = scan.options?.delegate
   const context = scan.options?.context || scan.options?.notes
   const scope = list(scan.target?.scope)
   const model = scan.options?.model || scan.runtime?.model
@@ -865,7 +1017,9 @@ export function ScanDetail({ id, onBack, onFinding }) {
                 onClick: () => action.mutate({ path: `/scans/${id}/resume`, expected: { status: ['running', 'awaiting_analysis', 'created'] } }) })
             : null,
           active && session ? jsx(Btn, { onClick: resumeChat, children: 'Continue scan' }) : null,
-          jsx(Btn, { onClick: openChat, children: session ? 'Open chat' : 'Run in chat' })
+          jsx(Btn, { onClick: openChat, children: session ? 'Open chat' : 'Run in chat' }),
+          // A running scan must be stopped first, so its agent is not left writing to a deleted scan.
+          active ? null : jsx(Btn, { disabled: deleting || action.isPending, onClick: remove, children: deleting ? 'Deleting…' : 'Delete' })
         ] })
       ] }),
       jsx(Fault, { error: action.error || chatError }),
@@ -876,6 +1030,7 @@ export function ScanDetail({ id, onBack, onFinding }) {
         jsx(Chip, { icon: 'scope', children: scope.length ? scope.join(', ') : 'Whole repository' }),
         jsx(Chip, { icon: 'flask', children: scan.safetyLevel === 'static' || scan.safety_level === 'static' ? 'Read-only' : 'Tests allowed' }),
         model ? jsx(Chip, { icon: 'model', children: model }) : null,
+        delegate ? jsx(Chip, { icon: 'model', children: `Subagents: ${delegate.name}` }) : null,
         context ? jsx(Chip, { icon: 'note', children: context.length > 80 ? context.slice(0, 80) + '…' : context }) : null
       ] }),
       // A finished scan without recorded steps has nothing honest to draw.
@@ -1072,6 +1227,23 @@ export function BrowserView({ kind, selected, setSelected, onFinding, newScan, s
     const wide = typeof window === 'undefined' || !window.innerWidth || window.innerWidth > 900
     if (!selected && !newScan && firstId && wide) setSelected(firstId)
   }, [firstId])
+  // Repositories come from scan history (latest scan per repository); folders from where findings are.
+  const repos = useData('/repositories', { limit: 100, offset: 0 })
+  const folders = useData('/finding-folders', filters.repo ? { repo: filters.repo } : {}, kind === 'Findings')
+  const repoChoices = items(repos.data).filter((r) => r.repoKey)
+  const scopeTools = [
+    repoChoices.length > 1 || filters.repo
+      ? jsx('select', { className: 'hs-mini', 'aria-label': 'Repository', value: filters.repo || '',
+          onChange: (e) => { setFilters((old) => ({ ...old, repo: e.target.value, folder: '' })); setOffset(0) },
+          children: [['', 'All repositories'], ...repoChoices.map((r) => [r.repoKey, repoName(r.root)])].map(([v, t]) =>
+            jsx('option', { value: v, title: v, children: t }, v)) }, 'repo')
+      : null,
+    kind === 'Findings' && (items(folders.data).length || filters.folder)
+      ? jsx('select', { className: 'hs-mini', 'aria-label': 'Folder', value: filters.folder || '', onChange: (e) => set('folder')(e.target.value),
+          children: [['', 'All folders'], ...items(folders.data).map((f) => [f.folder, `${f.folder}/ (${f.count})`])].map(([v, t]) =>
+            jsx('option', { value: v, children: t }, v)) }, 'folder')
+      : null
+  ].filter(Boolean)
   const findingsTools = kind === 'Findings'
     ? [
         jsx('select', { className: 'hs-mini', 'aria-label': 'Severity', value: filters.severity || '', onChange: (e) => set('severity')(e.target.value),
@@ -1097,7 +1269,8 @@ export function BrowserView({ kind, selected, setSelected, onFinding, newScan, s
           jsx(Icon, { name: 'search' }),
           jsx('input', { type: 'search', 'aria-label': `Search ${kind.toLowerCase()}`, placeholder: 'Search', value: filters.q, onChange: (e) => set('q')(e.target.value) })
         ] }),
-        ...findingsTools
+        ...findingsTools,
+        ...scopeTools
       ] }),
       jsx(Fault, { error: q.error }),
       jsxs('div', { className: 'hs-list-body', children: [
@@ -1113,7 +1286,7 @@ export function BrowserView({ kind, selected, setSelected, onFinding, newScan, s
         ? jsx(NewScan, { onClose: noScansYet ? null : () => setNewScan(false), onStarted: (id) => { setNewScan(false); setSelected(id) } })
         : selected
           ? kind === 'Scans'
-            ? jsx(ScanDetail, { id: selected, onBack: () => setSelected(null), onFinding }, selected)
+            ? jsx(ScanDetail, { id: selected, onBack: () => setSelected(null), onFinding, onDeleted: () => setSelected(null) }, selected)
             : jsx(FindingDetail, { id: selected, onBack: () => setSelected(null) }, selected)
           : emptyDetail
     })

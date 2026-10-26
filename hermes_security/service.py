@@ -206,9 +206,11 @@ class SecurityService:
     def start_scan(self, *, user_authorized=False, authorization_source=None, **opts):
         self._safe(opts)
         allowed = {'path', 'mode', 'scope', 'base', 'head', 'safety_level', 'allowLocalValidation', 'allow_tests',
-                   'deep_passes', 'budget', 'notes', 'context', 'provider', 'model', 'dependency_check'}
+                   'deep_passes', 'budget', 'notes', 'context', 'provider', 'model', 'dependency_check', 'delegate'}
         if set(opts) - allowed:
             raise ValidationError('unknown scan option')
+        if opts.get('delegate') is not None:
+            opts['delegate'] = self._delegate(opts['delegate'])
         if not isinstance(opts.get('path'), str):
             raise ValidationError('path is required')
         if 'context' in opts:  # friendlier name for the optional context box
@@ -299,6 +301,7 @@ class SecurityService:
                     'packetCount': len(packets), 'packetIds': [p['packetId'] for p in packets],
                     'laneCount': len(plan['lanes']), 'excludedTotal': plan['excluded']['total'],
                     'schedule': standard.SCHEDULE, 'dependencyCheck': plan['dependencyCheck'],
+                    'delegate': scan['options'].get('delegate'),
                     'possibleDuplicates': self._possible_duplicates(scan_id),
                     'next': self.next_step(scan_id),
                     'sections': ['summary', 'next', 'queue', 'packets', 'dependencies', 'inventory', 'coverage', 'candidates',
@@ -384,12 +387,34 @@ class SecurityService:
             reduced = self._reduced(scan_id)
         except Conflict:
             reduced = None
-        return next_step.derive(
+        result = next_step.derive(
             scan=scan, packets=packets, attempts=attempts, dispatches=self.store.dispatches(scan_id),
             reduced=reduced, receipts=self.store.validations(scan_id),
             chains_recorded=self.store.get_chains(scan_id) is not None, progress_key=progress_key,
             now=now or datetime.now(timezone.utc), max_parallel=standard.MAX_PARALLEL_WORKERS,
             deep_stopped=scan['mode'] == 'deep' and bool(self._deep_stop(scan, attempts, packets)))
+        delegate = scan['options'].get('delegate')
+        if delegate and result['step'] in {'dispatch', 'validate'}:
+            result['delegate'] = delegate
+            result['how'] += ' ' + self.delegate_instruction(delegate)
+        return result
+
+    # advanced-delegation's per-task parameter for each of its backends.
+    DELEGATE_PARAMS = {'model_map': ('option', 'model route'), 'profile_routes': ('profile', 'profile')}
+
+    def _delegate(self, value):
+        if not isinstance(value, dict) or set(value) != {'backend', 'name'} or value['backend'] not in self.DELEGATE_PARAMS:
+            raise ValidationError('delegate must be {backend: model_map|profile_routes, name}')
+        name = value['name']
+        if not isinstance(name, str) or not 0 < len(name) <= 64 or not name.isprintable() or '"' in name or chr(92) in name:
+            raise ValidationError('delegate name must be short text')
+        return {'backend': value['backend'], 'name': name}
+
+    @classmethod
+    def delegate_instruction(cls, delegate):
+        param, what = cls.DELEGATE_PARAMS[delegate['backend']]
+        return (f'Set "{param}": "{delegate["name"]}" on every delegate_task task: the user chose that {what} '
+                'for this scan\'s subagents.')
 
     def _coverage_input(self, scan, units, source):
         if not isinstance(units, list) or len(units) > 50000:
@@ -797,12 +822,12 @@ class SecurityService:
         self._filters(filters, {'q', 'status', 'repo_key', 'limit', 'offset'})
         return self.store.list_scans(**filters)
 
-    def workbench_scans(self, *, q=None, status=None, mode=None, limit=50, offset=0):
-        """Read-only SQL pagination including the desktop's scan-mode filter."""
-        self._filters(dict(q=q, status=status, mode=mode, limit=limit, offset=offset),
-                      {'q', 'status', 'mode', 'limit', 'offset'})
+    def workbench_scans(self, *, q=None, status=None, mode=None, repo_key=None, limit=50, offset=0):
+        """Read-only SQL pagination including the desktop's scan-mode and repository filters."""
+        self._filters(dict(q=q, status=status, mode=mode, repo_key=repo_key, limit=limit, offset=offset),
+                      {'q', 'status', 'mode', 'repo_key', 'limit', 'offset'})
         terms, args = [], []
-        for key, value in [('status', status), ('mode', mode)]:
+        for key, value in [('status', status), ('mode', mode), ('repo_key', repo_key)]:
             if value is not None:
                 terms.append(key + '=?'); args.append(value)
         if q:
@@ -823,7 +848,7 @@ class SecurityService:
         return {'items': items, 'total': total}
 
     def workbench_findings(self, *, q=None, triage=None, severity=None, evidence_state=None,
-                           validation_level=None, repo_key=None, owasp=None,
+                           validation_level=None, repo_key=None, folder=None, owasp=None,
                            chained=None, limit=50, offset=0):
         """Filter all workbench fields before LIMIT; never select evidence blobs.
 
@@ -831,10 +856,14 @@ class SecurityService:
         here rather than exposing database access to HTTP handlers.
         """
         filters = dict(q=q, triage=triage, severity=severity, evidence_state=evidence_state,
-                       validation_level=validation_level, repo_key=repo_key, owasp=owasp,
+                       validation_level=validation_level, repo_key=repo_key, folder=folder, owasp=owasp,
                        chained=chained, limit=limit, offset=offset)
         self._filters(filters, filters.keys())
         terms, args = [], []
+        if folder:
+            # A prefix compare, not LIKE: folder names may contain % or _.
+            prefix = folder.strip('/') + '/'
+            terms.append('substr(f.path,1,?)=?'); args.extend([len(prefix), prefix])
         for key, value in [('severity', severity), ('evidence_state', evidence_state), ('repo_key', repo_key),
                            ('chained', None if chained is None else int(chained))]:
             if value is not None:
@@ -903,6 +932,46 @@ class SecurityService:
     def list_repositories(self, **filters):
         self._filters(filters, {'limit', 'offset'})
         return self.store.list_repositories(**filters)
+
+    def finding_folders(self, repo_key=None, limit=200):
+        """Folders that hold findings (first two path levels), for the Findings folder filter."""
+        self._filters(dict(repo_key=repo_key), {'repo_key'})
+        query = 'SELECT path,count(DISTINCT finding_id) FROM findings'
+        args = []
+        if repo_key:
+            query += ' WHERE repo_key=?'; args.append(repo_key)
+        counts = {}
+        with self.store._connection() as conn:
+            for path, n in conn.execute(query + ' GROUP BY path LIMIT 20000', args):
+                parts = str(path or '').replace('\\', '/').split('/')[:-1]
+                for depth in (1, 2):
+                    if len(parts) >= depth:
+                        key = '/'.join(parts[:depth])
+                        counts[key] = counts.get(key, 0) + n
+        rows = sorted(counts.items(), key=lambda kv: kv[0].lower())
+        return {'items': [{'folder': k, 'count': v} for k, v in rows[:limit]], 'total': len(rows)}
+
+    def delete_scan(self, scan_id):
+        """Remove a stopped or finished scan, its findings and its saved files."""
+        self._scan(scan_id)
+        result = self.store.delete_scan(scan_id)
+        directory = scan_dir(self.data_dir, scan_id)
+        if directory.exists() and not is_link(directory):
+            from .target.clone import _force_remove
+            try:
+                _force_remove(directory)
+            except OSError:
+                result['filesLeft'] = str(directory)  # records are gone; a locked file can be removed later
+        return result
+
+    def clone_repository(self, url):
+        """Clone (or update) a remote repository into the profile so it can be scanned."""
+        from .target.clone import clone_or_update
+        return clone_or_update(url, self.data_dir)
+
+    def list_clones(self):
+        from .target.clone import list_clones
+        return {'items': list_clones(self.data_dir)}
 
     def list_grants(self, scan_id):
         self._scan(scan_id)
