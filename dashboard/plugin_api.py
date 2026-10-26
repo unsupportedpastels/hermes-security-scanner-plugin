@@ -172,7 +172,7 @@ def start_scan(body: dict = Body(...)):
     opts.pop('confirm', None)  # legacy clients; the "run tests" checkbox is the consent
     authorize = opts.get('allow_tests') is True or opts.get('allowLocalValidation') is True
     created = service.start_scan(**opts, user_authorized=authorize,
-                                 authorization_source='dashboard' if authorize else None)
+                                 authorization_source='dashboard' if authorize else None, background_dependencies=True)
     result = service.get_scan(created['scanId'])
     _broadcast('scan.updated', {'scanId': created['scanId']})
     return result

@@ -156,6 +156,7 @@ test('start form matches the simple flow and launches the scan in a background c
     await start.props.onClick()
     const create = env.calls.filter((c) => c.path === '/scans').at(-1)
     assert.deepEqual(create.options.body, expected)
+    assert.equal(create.options.timeoutMs, 60000)
     assert.equal(started, 'scan_new')
     assert.deepEqual(env.rpc.map(([m]) => m), ['session.create', 'prompt.submit'])
     assert.match(env.rpc[1][1].text, /scan_new/)

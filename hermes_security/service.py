@@ -43,6 +43,8 @@ class SecurityService:
         self.store = SecurityStore(self.data_dir, redactor=target.redact_secrets)
         self._local = threading.local()
         self._check_dependencies = dependency_checker or dependencies.check_dependencies
+        self._dependency_threads = {}
+        self._dependency_lock = threading.Lock()
 
     def _now(self):
         value = self.clock()
@@ -203,7 +205,7 @@ class SecurityService:
         listed = [item for item in excluded if item['reason'] != 'out_of_scope']
         return {'total': len(excluded), 'byReason': reasons, 'items': listed[:limit], 'itemsTruncated': len(listed) > limit}
 
-    def start_scan(self, *, user_authorized=False, authorization_source=None, **opts):
+    def start_scan(self, *, user_authorized=False, authorization_source=None, background_dependencies=False, **opts):
         self._safe(opts)
         allowed = {'path', 'mode', 'scope', 'base', 'head', 'safety_level', 'allowLocalValidation', 'allow_tests',
                    'deep_passes', 'budget', 'notes', 'context', 'provider', 'model', 'dependency_check', 'delegate'}
@@ -252,15 +254,53 @@ class SecurityService:
             options['diff'] = target.diff_manifest(resolved)
         scan = self.store.create_scan(mode=mode, safety_level=safety, target=resolved, inventory=inventory['files'], options=options)
         # Dependencies are checked before review so their advisories reach the reviewers as leads.
-        receipt = self._check_dependencies(
-            root=resolved['root'], inventory=inventory['files'], data_dir=self.data_dir,
-            work_dir=self._work(scan['scan_id']) / 'dependencies', enabled=opts.get('dependency_check', True),
-            read=lambda path, max_bytes=512_000: self._read_text(resolved['root'], path, max_bytes=max_bytes))
-        scan = self.store.set_scan_option(scan['scan_id'], 'dependencies', receipt)
-        self.store.add_event(scan['scan_id'], 'dependencies.checked', dependencies.describe(receipt), dependencies.compact(receipt))
-        scan = self.store.set_scan_status(scan['scan_id'], 'awaiting_analysis')
-        self.store.add_event(scan['scan_id'], 'scan.started', 'Snapshot inventoried; review packets ready.', {'packetCount': len(self._packets(scan))})
-        return self._plan(scan)
+        if background_dependencies and opts.get('dependency_check', True) and not dependencies.disabled_by_environment():
+            # osv-scanner can take minutes: answer now, and next_step holds review until the leads are saved.
+            scan = self.store.set_scan_option(scan['scan_id'], 'dependenciesPending', True)
+            self.store.add_event(scan['scan_id'], 'dependencies.started', 'Checking dependencies for known advisories.')
+            self._start_dependency_check(scan['scan_id'])
+            return self._plan(scan)
+        return self._plan(self._record_dependencies(scan, self._dependency_receipt(scan)))
+
+    def _dependency_receipt(self, scan):
+        root = scan['root']
+        return self._check_dependencies(
+            root=root, inventory=self.store.inventory(scan['scan_id']), data_dir=self.data_dir,
+            work_dir=self._work(scan['scan_id']) / 'dependencies', enabled=scan['options'].get('dependency_check', True),
+            read=lambda path, max_bytes=512_000: self._read_text(root, path, max_bytes=max_bytes))
+
+    def _record_dependencies(self, scan, receipt):
+        """Save the receipt and hand the scan to review, unless it was stopped while the check ran."""
+        scan_id = scan['scan_id']
+        self.store.set_scan_option(scan_id, 'dependencies', receipt)
+        self.store.add_event(scan_id, 'dependencies.checked', dependencies.describe(receipt), dependencies.compact(receipt))
+        scan = self.store.set_scan_option(scan_id, 'dependenciesPending', False)
+        if scan['status'] == 'created':
+            scan = self.store.set_scan_status(scan_id, 'awaiting_analysis')
+            self.store.add_event(scan_id, 'scan.started', 'Snapshot inventoried; review packets ready.', {'packetCount': len(self._packets(scan))})
+        return scan
+
+    def _start_dependency_check(self, scan_id):
+        """Run a pending check in the background; a check lost to a gateway restart starts again here."""
+        with self._dependency_lock:
+            if scan_id in self._dependency_threads:
+                return
+            def run():
+                try:
+                    scan = self._scan(scan_id)
+                    try:
+                        receipt = self._dependency_receipt(scan)
+                    except Exception as exc:  # a crashed check must not leave review waiting forever
+                        receipt = {'status': 'not_run', 'reason': f'dependency check failed: {exc}'[:500], 'leads': [], 'runtimes': []}
+                    self._record_dependencies(scan, receipt)
+                except SecurityError:
+                    pass  # the scan was deleted while its check ran
+                finally:
+                    with self._dependency_lock:
+                        self._dependency_threads.pop(scan_id, None)
+            thread = threading.Thread(target=run, name='security-dependency-check', daemon=True)
+            self._dependency_threads[scan_id] = thread
+            thread.start()
 
     @staticmethod
     def _read_text(root, path, max_bytes=512_000):
@@ -381,6 +421,8 @@ class SecurityService:
         if scan['sealed_at'] or scan['status'] == 'canceled':
             return next_step.derive(scan=scan, packets=[], attempts=[], dispatches=[], reduced=None, receipts=[],
                                     chains_recorded=False, progress_key=progress_key, now=None)
+        if scan['options'].get('dependenciesPending'):
+            self._start_dependency_check(scan_id)
         attempts = self._attempts(scan_id)
         packets = self._packets(scan)
         try:

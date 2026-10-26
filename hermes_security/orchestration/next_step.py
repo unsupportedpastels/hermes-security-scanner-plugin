@@ -59,6 +59,11 @@ def derive(*, scan, packets, attempts, dispatches, reduced, receipts, chains_rec
         return _result(scan, 'done', 'The scan is finished.', progress_key)
     if scan.get('status') == 'canceled':
         return _result(scan, 'blocked', 'The user stopped this scan; it continues only if they resume it.', progress_key)
+    if (scan.get('options') or {}).get('dependenciesPending'):
+        # Packets carry dependency leads, so none go out before the background check saves them.
+        return _result(scan, 'wait', 'The dependency check is still running.', progress_key, actionable=0,
+                       slots=0, running=0, how='Wait about 30 seconds, then read security_scan_get section next '
+                                               'again. Do not dispatch workers until the step changes.')
     accepted = [a for a in attempts if a.get('status') == 'accepted']
     accepted_ids = [a['attempt_id'] for a in accepted]
 

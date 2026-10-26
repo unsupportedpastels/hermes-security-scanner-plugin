@@ -118,10 +118,10 @@ export async function request(path, options) {
     throw new Error(errorText(error))
   }
 }
-export async function change(path, body, expected) {
+export async function change(path, body, expected, options = {}) {
   const [, resource, id] = path.split('/')
   const identity = resource === 'scans' && id ? { scanId: id } : resource === 'findings' && id ? { findingId: id } : {}
-  const saved = readback(await request(path, { method: 'POST', body }), { ...identity, ...expected })
+  const saved = readback(await request(path, { ...options, method: 'POST', body }), { ...identity, ...expected })
   await queryClient.invalidateQueries({ queryKey: [ID] })
   return saved
 }
@@ -638,7 +638,9 @@ export function NewScan({ onClose, onStarted }) {
         ...(model ? { model, provider } : currentModel ? { model: String(currentModel) } : {}),
         ...(options.delegate && routes.installed ? { delegate: { backend: routes.backend, name: options.delegate } } : {})
       }
-      const created = await change('/scans', body)
+      // Only the snapshot is taken before the reply (the dependency check runs after), but a large tree
+      // still takes a while to read, and giving up early leaves a scan with no session to run it.
+      const created = await change('/scans', body, undefined, { timeoutMs: 60000 })
       if (!created.scanId) throw new Error('The scan was not created. Try again.')
       const run = await launchScan(created.scanId, path, model ? { model, provider } : {})
       if (!run.background) host.notify({ kind: 'info', message: 'Send the drafted message in chat to run the scan.' })

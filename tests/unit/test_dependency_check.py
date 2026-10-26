@@ -2,6 +2,7 @@
 import hashlib
 import io
 import json
+import threading
 
 import pytest
 
@@ -176,3 +177,76 @@ def test_a_check_that_could_not_run_makes_the_scan_partial(tmp_path):
     assert result['status'] == 'partial'
     report = service.get_scan(plan['scanId'], 'report')['content']
     assert 'Not run:' in report and 'could not download osv-scanner' in report
+
+
+def repo(tmp_path):
+    root = tmp_path / 'repo'; root.mkdir()
+    (root / 'package-lock.json').write_text('{}\n')
+    (root / 'app.js').write_text('module.exports = 1\n')
+    return str(root)
+
+
+def area_leads(service, scan_id):
+    area = next(p for p in service._packets(service._scan(scan_id)) if p.get('review') == 'area')
+    return area.get('dependencyLeads')
+
+
+def test_background_check_answers_at_once_and_holds_review_until_leads_are_saved(tmp_path, monkeypatch):
+    monkeypatch.delenv('HERMES_SECURITY_DEPENDENCY_CHECK')
+    release = threading.Event()
+
+    def slow(**kwargs):
+        release.wait(10)
+        return fake_checker(ok_receipt())(**kwargs)
+    service = SecurityService(tmp_path / 'data', dependency_checker=slow)
+    plan = service.start_scan(path=repo(tmp_path), background_dependencies=True)
+    sid = plan['scanId']
+    assert plan['status'] == 'created' and plan['dependencyCheck'] is None
+    assert service.next_step(sid)['step'] == 'wait' and service.stall(service._scan(sid)) is None
+    thread = service._dependency_threads[sid]
+    release.set()
+    thread.join(10)
+    assert service._scan(sid)['status'] == 'awaiting_analysis'
+    assert service.next_step(sid)['step'] == 'dispatch'
+    assert area_leads(service, sid)['items'][0]['name'] == 'lodash'
+    events = [e['kind'] for e in service.activity(sid)['items']]
+    assert events.index('dependencies.started') < events.index('dependencies.checked') < events.index('scan.started')
+
+
+def test_a_check_lost_to_a_gateway_restart_runs_again_on_the_next_read(tmp_path, monkeypatch):
+    monkeypatch.delenv('HERMES_SECURITY_DEPENDENCY_CHECK')
+    calls = []
+
+    def check(**kwargs):
+        calls.append(1)
+        return fake_checker(ok_receipt())(**kwargs)
+    first = SecurityService(tmp_path / 'data', dependency_checker=check)
+    monkeypatch.setattr(first, '_start_dependency_check', lambda scan_id: None)  # died before the check ran
+    sid = first.start_scan(path=repo(tmp_path), background_dependencies=True)['scanId']
+    restarted = SecurityService(tmp_path / 'data', dependency_checker=check)
+    assert restarted.next_step(sid)['step'] == 'wait'
+    thread = restarted._dependency_threads.get(sid)
+    if thread:
+        thread.join(10)
+    assert calls == [1] and restarted.next_step(sid)['step'] == 'dispatch'
+
+
+def test_a_crashed_background_check_is_recorded_not_run_and_review_goes_on(tmp_path, monkeypatch):
+    monkeypatch.delenv('HERMES_SECURITY_DEPENDENCY_CHECK')
+
+    def broken(**kwargs):
+        raise RuntimeError('boom')
+    service = SecurityService(tmp_path / 'data', dependency_checker=broken)
+    sid = service.start_scan(path=repo(tmp_path), background_dependencies=True)['scanId']
+    thread = service._dependency_threads.get(sid)
+    if thread:
+        thread.join(10)
+    check = service.get_scan(sid, 'dependencies')['check']
+    assert check['status'] == 'not_run' and 'boom' in check['reason']
+    assert service.next_step(sid)['step'] == 'dispatch'
+
+
+def test_a_turned_off_check_stays_synchronous(tmp_path):
+    service = SecurityService(tmp_path / 'data')
+    plan = service.start_scan(path=repo(tmp_path), background_dependencies=True)
+    assert plan['status'] == 'awaiting_analysis' and not service._dependency_threads
