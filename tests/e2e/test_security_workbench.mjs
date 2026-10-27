@@ -823,3 +823,43 @@ test('findings filter by repository and folder; scans by repository', () => {
     delete env.stateWrites
   }
 })
+
+test('a finished scan opens with a short summary and a link to the Markdown report', async () => {
+  const partial = { completeness: 'partial', files: { total: 213, reviewed: 174, deferred: 38, unsupported: 1 } }
+  const scan = { counts: { medium: 9, low: 9, chains: 0 }, dependencyCheck: { status: 'ok', packages: 826, vulnerablePackages: 16 } }
+  assert.deepEqual(plugin.reportSummary(scan, partial), [
+    '18 findings: 9 medium, 9 low.',
+    "Partly reviewed: 174 of 213 files were read. Not covered: 38 files not read in full to stay within the review budget; 1 file in a format it can't review (such as a binary).",
+    'Dependencies: 16 of 826 packages have published advisories.'
+  ])
+  assert.deepEqual(plugin.reportSummary({}, { coverage: { completeness: 'partial', files: { total: 3, reviewed: 3 } } }), [
+    'No reportable findings.', 'Partly reviewed: 3 of 3 files were read. Some review work was not finished; see Coverage below. No findings here does not mean the code is safe.'])
+  assert.deepEqual(plugin.reportSummary({ counts: { high: 1 } }, { completeness: 'complete', files: { total: 5 } }), ['1 finding: 1 high.', 'Fully reviewed: all 5 files in scope were read.'])
+  env.fixtures['/scans/scan_test'].status = 'completed'
+  env.fixtures['/scans/scan_test/coverage'] = partial
+  try {
+    const view = nodes(plugin.ScanDetail({ id: 'scan_test' }))
+    const section = view.find((n) => n.props?.className === 'hs-report')
+    assert.match(render(section), /Partly reviewed: 174 of 213/)
+    const link = nodes(section).find((n) => n.type === 'button' && n.props.children === 'Full report (.md)')
+    env.response = { scanId: 'scan_test', content: '# Report', contentType: 'text/markdown', filename: 'report.md' }
+    let saved
+    globalThis.document = { createElement: () => ({ click() { saved = this.download } }) }
+    const urls = globalThis.URL
+    globalThis.URL = { createObjectURL: () => 'blob:x', revokeObjectURL() {} }
+    try {
+      await link.props.onClick()
+    } finally {
+      globalThis.URL = urls
+      delete globalThis.document
+    }
+    assert.equal(env.calls.at(-1).path, '/exports/scan_test/md')
+    assert.equal(saved, 'report.md')
+    env.fixtures['/scans/scan_test'].status = 'awaiting_analysis'
+    assert.equal(nodes(plugin.ScanDetail({ id: 'scan_test' })).some((n) => n.props?.className === 'hs-report'), false)
+  } finally {
+    delete env.response
+    delete env.fixtures['/scans/scan_test/coverage']
+    env.fixtures['/scans/scan_test'].status = 'awaiting_analysis'
+  }
+})

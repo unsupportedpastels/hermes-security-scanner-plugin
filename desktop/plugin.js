@@ -304,6 +304,9 @@ details.hs-fold{border:1px solid var(--ui-stroke-secondary);border-radius:8px;pa
 details.hs-fold>summary{cursor:pointer;padding:10px 0;font-weight:500;color:var(--ui-text-secondary)}
 details.hs-fold[open]>summary{margin-bottom:8px;border-bottom:1px solid var(--ui-stroke-secondary)}details.hs-fold[open]{padding-bottom:10px}
 .hs-workbench pre{margin:6px 0;padding:10px;border-radius:7px;font-size:12px;white-space:pre-wrap;overflow-wrap:anywhere;overflow:auto;background:var(--chrome-action-hover)}
+.hs-report{border:1px solid var(--ui-stroke-secondary);border-radius:8px;padding:10px 14px;margin:0 0 18px;overflow-wrap:anywhere}
+.hs-report-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px}.hs-report h3{margin:0 0 4px;font-size:13px;font-weight:600}
+.hs-report p{margin:3px 0;line-height:1.5;color:var(--ui-text-secondary)}
 .hs-alert{margin:8px 0;padding:10px 12px;border-radius:7px;white-space:pre-wrap;background:var(--chrome-action-hover)}
 .hs-error{color:var(--hs-critical);background:color-mix(in srgb,var(--hs-critical) 10%,transparent)}
 .hs-form{display:flex;flex-direction:column;gap:18px;max-width:560px}
@@ -805,6 +808,45 @@ export function ExportPanel({ id }) {
     jsx(Fault, { error })
   ] })
 }
+const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`
+// Plain sentences for the top of a finished scan; every number comes from the sealed scan.
+export function reportSummary(scan, coverageData) {
+  const coverage = coverageData?.coverage || coverageData || {}
+  const files = coverage.files || {}
+  const counts = scan.counts || scan.manifest?.counts || {}
+  const total = SEVERITIES.reduce((n, s) => n + (counts[s] || 0), 0)
+  const lines = [total
+    ? `${plural(total, 'finding')}: ${SEVERITIES.filter((s) => counts[s]).map((s) => `${counts[s]} ${sevName(s)}`).join(', ')}.`
+    : 'No reportable findings.']
+  if (coverage.completeness === 'complete') {
+    lines.push(Number.isFinite(files.total) ? `Fully reviewed: all ${files.total} files in scope were read.` : 'Fully reviewed.')
+  } else if (coverage.completeness) {
+    const left = [
+      files.deferred ? `${plural(files.deferred, 'file')} not read in full to stay within the review budget` : null,
+      files.unsupported ? `${plural(files.unsupported, 'file')} in a format it can't review (such as a binary)` : null
+    ].filter(Boolean)
+    lines.push(`Partly reviewed: ${files.reviewed ?? '?'} of ${files.total ?? '?'} files were read. `
+      + (left.length ? `Not covered: ${left.join('; ')}.` : 'Some review work was not finished; see Coverage below.')
+      + (total ? '' : ' No findings here does not mean the code is safe.'))
+  }
+  const deps = scan.dependencyCheck
+  if (deps?.status === 'ok')
+    lines.push(`Dependencies: ${deps.vulnerablePackages || 0} of ${plural(deps.packages || 0, 'package')} have published advisories.`)
+  else if (deps && deps.status !== 'no_sources') lines.push('Dependencies: not checked.')
+  return lines
+}
+export function ReportSummary({ id, scan, coverage }) {
+  const [error, setError] = useState(null)
+  return jsxs('section', { className: 'hs-report', 'aria-label': 'Summary', children: [
+    jsxs('div', { className: 'hs-report-head', children: [
+      jsx('h3', { children: 'Summary' }),
+      jsx('button', { type: 'button', className: 'hs-link', onClick: () => downloadExport(id, 'md').catch(setError),
+        children: 'Full report (.md)' })
+    ] }),
+    ...reportSummary(scan, coverage).map((line, i) => jsx('p', { children: line }, i)),
+    jsx(Fault, { error })
+  ] })
+}
 const STAGES = [
   ['Prepare', ['Preparing scan']],
   ['Review', ['Building threat model', 'Reviewing code']],
@@ -1050,6 +1092,7 @@ export function ScanDetail({ id, onBack, onFinding, onDeleted }) {
         delegate ? jsx(Chip, { icon: 'model', children: `Subagents: ${delegate.name}` }) : null,
         context ? jsx(Chip, { icon: 'note', children: context.length > 80 ? context.slice(0, 80) + '…' : context }) : null
       ] }),
+      finished ? jsx(ReportSummary, { id, scan, coverage: coverage.data }) : null,
       // A finished scan without recorded steps has nothing honest to draw.
       list(scan.progress?.steps).length || !finished ? jsx(Progress, { scan }) : null,
       active && scan.stall && !pausedWhy(scan) ? jsx(StallNotice, { stall: scan.stall, onContinue: session ? resumeChat : null })
