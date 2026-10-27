@@ -3,7 +3,21 @@ from copy import deepcopy
 from .. import target
 from ..canonical import sha256_hex
 from ..domain.models import normalize_candidate
-from ..errors import ValidationError
+from ..errors import TargetError, ValidationError
+
+
+def _excerpt_problem(scan, evidence, paths):
+    """Say when a mismatch comes from snapshot redaction, so workers cite the redacted text."""
+    try:
+        actual = target.read_excerpt(scan['root'], evidence['path'], evidence['startLine'],
+                                     evidence.get('endLine', evidence['startLine']), inventory_paths=set(paths),
+                                     expected_sha256=paths[evidence['path']]['sha256'])
+    except (TargetError, OSError, ValueError):
+        return 'code excerpt does not match snapshot'
+    if '[REDACTED:' in actual:
+        return ('code excerpt does not match snapshot: these lines are secret-redacted in the snapshot; '
+                'cite them with the [REDACTED:...] markers as security_scan_get returns them')
+    return 'code excerpt does not match snapshot'
 
 
 def check_candidate(raw, *, scan, inventory, attempt_id):
@@ -20,7 +34,7 @@ def check_candidate(raw, *, scan, inventory, attempt_id):
             raise ValidationError('citation line range is outside inventory file')
     for evidence in candidate['codeEvidence']:
         if not target.verify_excerpt(scan['root'], evidence['path'], evidence['startLine'], evidence.get('endLine', evidence['startLine']), evidence.get('code'), inventory_paths=set(paths), expected_sha256=paths[evidence['path']]['sha256']):
-            raise ValidationError('code excerpt does not match snapshot')
+            raise ValidationError(_excerpt_problem(scan, evidence, paths))
         evidence['sha256'] = sha256_hex(evidence['code'])
     # A worker may describe source support but cannot claim runtime receipt authority.
     validation = candidate.get('validation', {})
@@ -30,6 +44,5 @@ def check_candidate(raw, *, scan, inventory, attempt_id):
     p = candidate['provenance']
     p['workerAttemptIds'] = [attempt_id]
     p['sourceCandidateIds'] = [candidate['candidateId']]
-    p['detectors'] = []
     p['supersedes'] = None
     return deepcopy(candidate)

@@ -46,8 +46,6 @@ def test_end_to_end_static(tmp_path):
     assert service.submit_worker_result(payload)['duplicates'] == 1
     stored = service.get_scan(sid, 'candidates')['items'][0]
     assert stored['codeEvidence'][0]['sha256'] == sha256_hex(candidate['codeEvidence'][0]['code'])
-    receipt = service.run_detectors(sid, ['builtin-secrets'])['receipts'][0]
-    assert receipt['status'] == 'ok' and receipt['resultCount'] >= 1
     candidate['evidenceState'] = 'source_supported'
     service.submit_worker_result(worker(plan, [candidate], attempt='att_validator', role='validator'))
     service.checkpoint(sid, coverage=[{'unit': 'lane:A01:2025', 'state': 'reviewed', 'note': 'Ownership checks reviewed.'}], note='Authorization pass done.')

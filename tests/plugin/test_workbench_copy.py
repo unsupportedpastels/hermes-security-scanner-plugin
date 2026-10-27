@@ -27,10 +27,11 @@ def test_no_marketing_or_ambiguous_validation_copy():
 
 def test_distinct_sections_and_evidence_limitations():
     text = SOURCE.read_text()
-    for section in ['Summary', 'Root cause', 'Attack path', 'Source excerpts', 'Counterevidence', 'Proof gaps', 'Validation', 'Severity assessment', 'Recommended fix', 'Regression tests', 'Patch preview only', 'Coverage and limitations']:
+    for section in ['What’s wrong', 'How it could be abused', 'Why it happens', 'Evidence', 'How to fix it', 'Coverage']:
         assert f"title: '{section}'" in text
-    assert 'Evidence warning: High confidence was recorded without a source excerpt.' in text
-    assert 'Defeating assumptions and controls' in text
-    assert 'Zero findings does not establish that a target is safe.' in text
-    assert 'No files are changed here.' in text
-    assert 'No scan was started.' in text
+    assert 'High confidence was recorded without a code excerpt' in text
+    assert 'Not tested: supported by reading the code.' in text
+    assert 'Still unproven' in text
+    assert 'What would stop it' in text
+    assert 'Zero findings does not establish that the code is safe.' in text
+    assert 'optimistic' not in text.lower()

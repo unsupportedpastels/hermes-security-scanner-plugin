@@ -155,8 +155,8 @@ def deterministic(contract=True):
         'citation-resolution-and-forgery-rejection': ['tests/integration/test_end_to_end_static.py::test_end_to_end_static', 'tests/integration/test_service_security.py::test_reject_candidate_citations_claims_and_secrets'],
         'zero-fabricated-runtime-claims': ['tests/integration/test_service_security.py::test_runtime_receipt_cannot_be_forged_by_worker_or_tool'],
         'zero-cross-scan-contamination': ['tests/integration/test_service_security.py::test_packet_scan_and_attempt_binding', 'tests/integration/test_profile_isolation.py', 'tests/unit/test_schemas.py::test_cross_scan_and_reference_checks'],
-        'no-hidden-truncation-input-canaries': ['tests/unit/test_detector_sarif.py::test_invalid_and_truncated', 'tests/unit/test_schemas.py::test_nested_limits_and_unknowns', 'tests/unit/test_target_hostile.py::test_hardlinks_classification_and_limits'],
-        'no-false-clean-unavailable-detectors': ['tests/integration/test_service_modes.py::test_missing_sections_retained_and_detector_unavailable', 'tests/unit/test_standards_mapping.py'],
+        'no-hidden-truncation-input-canaries': ['tests/unit/test_schemas.py::test_nested_limits_and_unknowns', 'tests/unit/test_target_hostile.py::test_hardlinks_classification_and_limits'],
+        'no-false-clean-missing-sections': ['tests/integration/test_service_modes.py::test_missing_sections_retained', 'tests/unit/test_standards_mapping.py'],
     }
     for name, selectors in groups.items(): gates.append(_pytest_gate(name, selectors))
     run = subprocess.run([sys.executable, str(ROOT / 'scripts/eval_chains.py')], text=True, capture_output=True)
@@ -176,16 +176,11 @@ def _coverage_canaries():
     from hermes_security.standards.ledger import load_top10
     scan = {'scan_id': 'scan_eval', 'options': {'surfaces': []}}
     units = [{'unit': 'lane:' + c['id'], 'state': 'not_applicable', 'note': 'empty synthetic scope'} for c in load_top10()['categories']]
-    baseline = build_coverage(scan, [], units, [], [], [], [])
-    errors = []
-    for status, truncated in [('failed', False), ('unavailable', False), ('unknown', False), ('ok', True)]:
-        receipt = {'detector': 'eval', 'status': status, 'truncated': truncated}
-        coverage = build_coverage(scan, [], units, [], [receipt], [], [])
-        if coverage['completeness'] != 'partial' or not any('Detector eval' in g for g in coverage['gaps']): errors.append(receipt)
+    baseline = build_coverage(scan, [], units, [], [], [])
     truncated = deepcopy(scan); truncated['options']['truncated'] = True
-    coverage = build_coverage(truncated, [], units, [], [], [], [])
+    coverage = build_coverage(truncated, [], units, [], [], [])
     hidden = int(coverage['completeness'] != 'partial' or 'Inventory was truncated.' not in coverage['gaps'])
-    return [gate('zero-false-clean-failed-detectors', 0, len(errors), not errors and baseline['completeness'] == 'complete', cases=4),
+    return [gate('complete-baseline-is-clean', 0, int(baseline['completeness'] != 'complete'), baseline['completeness'] == 'complete'),
             gate('zero-hidden-inventory-truncation', 0, hidden, hidden == 0)]
 
 

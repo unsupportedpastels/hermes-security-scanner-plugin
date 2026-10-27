@@ -43,7 +43,6 @@ hermes_security/
   target/                resolve/inventory/snapshot/policy/excerpt   [W1-target]
   store/                 db/migrations/artifacts/leases              [W1-store]
   standards/             owasp-top10-2025.json asvs-5.0.0.json cwe-map.json + ledger.py  [W1-standards]
-  detectors/             base/sarif/semgrep/secrets/dependencies/iac [W1-detectors]
   validation/            policy/plans/runner/receipts                [W1-validation]
   chains/                graph/eligibility/compose/validate          [W1-chains]
   reports/               finalize/markdown/sarif/export/copy         [W1-reports]
@@ -126,7 +125,7 @@ positive+negative controls, and level `local-safe` or `active-authorized`. A pro
   "secret": null | {"type": "aws-access-key", "fingerprint": "sha256:<16hex>"},
   "diffAttribution": null | "introduced" | "inherited",
   "provenance": {"methodologyVersion": "hermes-security/method-1", "workerAttemptIds": [...],
-                 "sourceCandidateIds": [...], "detectors": ["semgrep"], "supersedes": null}
+                 "sourceCandidateIds": [...], "supersedes": null}
 }
 ```
 
@@ -137,7 +136,7 @@ distinct (normalized whitespace/case comparison; reject if any two are identical
 
 Same field names as Finding except: no `findingId/occurrenceId/fingerprints` (computed by the plugin),
 `candidateId` is computed `stable_id("cand", scanId, ruleId, identity.anchor, locations[0].path, locations[0].startLine)`,
-`evidenceState` limited to `candidate|source_supported|rejected|inconclusive`, plus `source: "worker"|"detector"`.
+`evidenceState` limited to `candidate|source_supported|rejected|inconclusive`, plus `source: "worker"`.
 Workers may submit partially filled candidates; finalization requires the Finding completeness rules above for
 any candidate promoted to a reported finding (evidenceState in source_supported/runtime_confirmed). Rejected and
 inconclusive candidates are retained in `findings.json` under `"retained"` with their reasons, not dropped.
@@ -169,15 +168,15 @@ returned, not silently fixed.
 {"documentType":"hermes-security.coverage","schemaVersion":"1.0","scanId":"...",
  "completeness":"complete"|"partial",
  "files":{"total":N,"reviewed":N,"deferred":N,"unsupported":N,"excluded":[{"path":"...","reason":"..."}]},
- "units":[{"unitId":"file:src/a.py","kind":"file|lane|asvs|detector|worker","state":COVERAGE_STATE,"reason":"...","evidence":["attemptId or receipt"]}],
+ "units":[{"unitId":"file:src/a.py","kind":"file|lane|asvs|worker","state":COVERAGE_STATE,"reason":"...","evidence":["attemptId or receipt"]}],
  "standards":{"owaspTop10":{"version":"2025","categories":[{"id":"A01:2025","state":COVERAGE_STATE,"evidence":[...],"reason":"..."}]},
               "asvs":{"version":"5.0.0","controls":[{"id":"V8.2.2","state":...,"evidence":[...],"reason":"..."}]}},
- "detectors":[DetectorReceiptSummary], "workers":[{"attemptId":"...","role":"...","status":"accepted|rejected|missing|late"}],
+ "workers":[{"attemptId":"...","role":"...","status":"accepted|rejected|missing|late"}],
  "gaps":["plain-language gap statements"]}
 ```
 
 `completeness == "complete"` only if: every inventory file is reviewed/not_applicable (or explicitly excluded by
-scope), every applicable OWASP category is reviewed/not_applicable, no detector lane is `failed`/`unknown`, no worker
+scope), every applicable OWASP category is reviewed/not_applicable, no worker
 is `missing`. Anything else → `partial`, and `gaps` lists why. A scan with zero findings and partial coverage must
 never be reported as clean.
 
@@ -227,7 +226,7 @@ Edge: `{"from":"hsf_..","to":"hsf_..","effect":Capability,"precondition":Capabil
 `SecurityStore(data_dir: Path)` opens `data_dir/"security.db"` (WAL, foreign_keys=ON, busy_timeout=5000), creates
 `data_dir/"scans"` with 0o700. Tables (migrations.py, versioned `PRAGMA user_version`):
 `scans, snapshots, inventory_files, worker_attempts, candidates, evidence, validations, validation_grants,
-chains, detector_runs, coverage_units, events, seals, triage, repositories`.
+chains, coverage_units, events, seals, triage, repositories`.
 
 Required methods (all JSON-able dict returns; raise errors.* on misuse):
 
@@ -243,13 +242,12 @@ list_candidates(scan_id, *, states=None) -> list[dict]
 set_candidate_state(scan_id, candidate_id, state, *, reason) -> dict
 record_coverage(scan_id, units: list[dict], *, source: str)   # last-writer-wins per unit only if not sealed; keeps history in events
 coverage_units(scan_id) -> list[dict]
-record_detector_run(scan_id, receipt: dict) -> dict ; detector_runs(scan_id) -> list[dict]
 record_validation(scan_id, receipt: dict) -> dict ; validations(scan_id, candidate_id=None) -> list[dict]
 record_chains(scan_id, chains_doc: dict) -> dict ; get_chains(scan_id) -> dict | None
 add_event(scan_id, kind, message, data=None) -> dict ; events(scan_id, *, after_id=0, limit=200) -> list[dict]
 seal(scan_id, manifest_digest: str, artifact_dir: str) -> dict ; is_sealed(scan_id) -> bool
 upsert_finding_index(scan_id, findings: list[dict])      # denormalized rows for workbench search/filter
-list_findings(*, q=None, severity=None, evidence_state=None, triage=None, repo_key=None, owasp=None, detector=None,
+list_findings(*, q=None, severity=None, evidence_state=None, triage=None, repo_key=None, owasp=None,
               chained=None, scan_id=None, limit=50, offset=0) -> {"items","total"}
 get_finding(finding_id, *, scan_id=None) -> dict          # latest occurrence unless scan_id given
 set_triage(finding_id, state, *, note=None) -> dict       # TRIAGE_STATES; does not touch sealed artifacts
@@ -277,7 +275,7 @@ diff_manifest(target: dict) -> {"base","head","changed":[path],"deleted":[path],
 read_excerpt(root, path, start, end, *, inventory_paths, max_chars=4000) -> str   # containment+symlink checks; redacts secrets
 verify_excerpt(root, path, start, end, code, *, inventory_paths) -> bool
 is_snapshot_current(target: dict, digest: str) -> bool   # recompute; False when dirty tree changed
-redact_secrets(text) -> (str, list[{"type","fingerprint","line"}])   # shared by detectors/reports
+redact_secrets(text) -> (str, list[{"type","fingerprint","line"}])   # shared by excerpts/reports
 ```
 
 ## Standards (standards/*) — W1-standards
@@ -295,25 +293,6 @@ build_ledger(surfaces, coverage_units: list[dict], findings: list[dict]) -> dict
 map_cwe(cwe: str) -> {"owasp":[...], "asvs":[...]}
 specialist_profiles_for(surfaces) -> list[str]   # names of references/specialist-profiles/*.md to load
 ```
-
-## Detectors (detectors/*) — W1-detectors
-
-```python
-class Detector:  name: str; kind: "sast|secrets|sca|iac|sarif"
-  def probe(self) -> {"available":bool,"executable":str|None,"version":str|None,"reason":str|None}
-  def plan(self, target: dict, inventory: dict) -> {"argv":[...],"timeout_s":int,"env":{}}  # argv never via shell
-  def run(self, target, inventory, *, timeout_s=600) -> DetectorReceipt     # subprocess, no shell, cwd=root, stdin=DEVNULL,
-                                                                             # minimal env, output to temp file under data_dir
-  def parse(self, raw_path) -> list[dict]   # raw normalized results
-  def normalize(self, results, target, inventory) -> list[Candidate]   # evidenceState="candidate", source="detector"
-DetectorReceipt = {"receiptId","detector","kind","status":"ok|failed|timeout|unavailable|parse_error","executable","version",
-  "ruleVersion","commandDigest","exitCode","durationMs","targetFileCount","resultCount","truncated":bool,"error":str|None}
-import_sarif(path_or_bytes, *, target, inventory, detector_name="sarif") -> (list[Candidate], DetectorReceipt)
-REGISTRY = {"semgrep":..., "gitleaks":..., "osv-scanner":..., "trivy":..., "builtin-secrets":...}
-```
-A built-in stdlib secret detector (`builtin-secrets`, regexes for common key formats + high-entropy assignments) must
-exist so secret coverage works without external tools. Unavailable tools → receipt `status:"unavailable"` → coverage
-unit `detector:<name>` state `unsupported` (never `reviewed`). Failures/timeouts → `failed`.
 
 ## Validation (validation/*) — W1-validation
 
@@ -371,11 +350,12 @@ Banned copy words in generated text: comprehensive, robust, seamless, delve, cri
 
 `SecurityService(data_dir: Path, *, profile: str = "default")` wraps the store and all libraries. Methods mirror the
 tools and HTTP API: `start_scan(**opts)`, `get_scan(scan_id, section=None, limit, offset)` (sections: `summary` = small
-header with scanId/root/snapshotDigest/methodologyVersion/submit/packetIds, always under the tool cap; `packets`
-paginated; plus inventory, coverage, candidates, findings, workers, detectors, validations, chains, activity, manifest,
+header with scanId/root/snapshotDigest/methodologyVersion/submit/packetIds and `next`, always under the tool cap;
+`next` = `next_step(scan_id)`: `{step: dispatch|wait|validate|chains|finalize|done|blocked, items (<=50, to-do
+first then running), total, actionable, reason, progressKey, how}` derived only from stored state; `packets`
+paginated; plus inventory, coverage, candidates, findings, workers, validations, chains, activity, manifest,
 report), `checkpoint(...)`,
-`submit_worker_result(payload)`, `import_detector_results(scan_id, detector=None, sarif_path=None, run=False)`,
-`run_detectors(scan_id, names=None)`, `record_validations(scan_id, receipts|plans)`, `propose_chains(scan_id)`,
+`submit_worker_result(payload)`, `record_validations(scan_id, receipts|plans)`, `propose_chains(scan_id)`,
 `record_chains(scan_id, explanations)`, `finalize(scan_id)`, `cancel(scan_id)`, `resume(scan_id)`, `export(scan_id, fmt)`,
 `summary()`, `list_scans(...)`, `activity(scan_id, after_id, limit)`, `coverage(scan_id)`, `list_findings(...)`,
 `get_finding(finding_id)`, `triage(finding_id, state, note)`, `patch_preview(finding_id)`, `list_repositories(...)`.
@@ -386,7 +366,7 @@ The directory name was confirmed by the host, not assumed from the plugin ID.
 
 Agent tools (toolset `security`, every handler returns a JSON string `{"ok":true,...}` or `{"ok":false,"error":{code,message}}`):
 `security_scan_start, security_scan_get, security_scan_checkpoint, security_scan_submit_worker_result,
-security_scan_import_detector_results, security_scan_record_validations, security_scan_record_chains,
+security_scan_record_validations, security_scan_record_chains,
 security_scan_finalize, security_scan_cancel, security_scan_export`.
 Slash command `/security` (status | authorize-validation <scan> <origin> [--actions ..] [--minutes N] | revoke <grant>).
 CLI `hermes security-review ...` and `python -m hermes_security ...` expose the same service for subagents/terminal use.

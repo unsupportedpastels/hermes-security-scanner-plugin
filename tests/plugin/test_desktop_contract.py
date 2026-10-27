@@ -32,9 +32,9 @@ def test_backend_route_builders_are_bounded():
     text = SOURCE.read_text()
     # Every REST call passes through the one route-checked request helper.
     assert text.count('pluginCtx.rest(') == 1
-    for path in ['/summary', '/scans', '/findings', '/repositories', '/exports/']:
+    for path in ['/scans', '/findings', '/repositories', '/folders', '/exports/']:
         assert path in text
-    for action in ['cancel', 'resume', 'activity', 'coverage', 'triage', 'patch']:
+    for action in ['cancel', 'resume', 'activity', 'coverage', 'triage', 'patch', 'session']:
         assert action in text
     assert 'assertBackendPath(path)' in text
     assert 'dangerouslySetInnerHTML' not in text

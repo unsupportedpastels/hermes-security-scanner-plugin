@@ -27,9 +27,8 @@ def plan():
     ({'url':'http://localhost/'}, 'origin'),
     ({'url':'file:///etc/passwd'}, 'scheme'),
     ({'url':'http://user@127.0.0.1/'}, 'userinfo'),
-    ({'method':'PUT'}, 'method'), ({'method':'PATCH'}, 'method'),
     ({'method':'DELETE'}, 'method'), ({'method':'TRACE'}, 'method'),
-    ({'method':'CONNECT'}, 'method'), ({'method':'POST'}, 'syntheticBody'),
+    ({'method':'CONNECT'}, 'method'),
     ({'used':2}, 'remaining'), ({'cleanup':None}, 'cleanup'),
     ({'negativeControl':None}, 'controls'), ({'actions':[]}, 'action'),
 ])
@@ -51,7 +50,18 @@ def test_grant_and_origin():
     with pytest.raises(ValidationError): mint_grant(s,'scan',origins=[],actions=['shell'],expires_in_s=0,max_requests=0)
     with pytest.raises(PolicyDenied): mint_grant(s,'scan',origins=[],actions=['local-command'],expires_in_s=60,max_requests=2,created_by='agent')
 
-@pytest.mark.parametrize('argv', ['echo x; curl x', ['curl','https://example.com'], ['env','wget','x'], ['sh','-c','echo x']])
+@pytest.mark.parametrize('method', ['GET', 'POST', 'PUT', 'PATCH'])
+def test_normal_methods_allowed_within_grant(method):
+    p=plan(); p['requests'][0]['method']=method
+    check_plan(p,grant=grant(),safety_level='active-authorized',now='2026-01-01T00:00:00Z')
+
+@pytest.mark.parametrize('argv', [['sh','-c','npm test'], ['curl','http://127.0.0.1:3000/'], ['bash','run-tests.sh'], ['python','-m','pytest']])
+def test_dev_tooling_commands_allowed(argv):
+    p=dict(kind='local-command',level='local-safe',commands=[argv],positiveControl={'commandIndex':0,'expectedMarker':'x'},negativeControl={'commandIndex':0})
+    check_plan(p,grant=None,safety_level='local-safe',now='2026-01-01T00:00:00Z')
+    assert p['cleanup']=={'strategy':'remove-copy'}
+
+@pytest.mark.parametrize('argv', ['echo x; curl x', ['sudo','rm','-rf','/'], ['runas.exe','/user:admin','cmd'], []])
 def test_command_denial(argv):
     p=dict(kind='local-command',level='local-safe',commands=[argv],cleanup={'strategy':'copy'},positiveControl={'commandIndex':0,'expectedMarker':'x'},negativeControl={'commandIndex':0})
     with pytest.raises(PolicyDenied): check_plan(p,grant=None,safety_level='local-safe',now='2026-01-01T00:00:00Z')

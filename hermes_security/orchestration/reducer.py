@@ -5,13 +5,14 @@ from copy import deepcopy
 
 def reduce_candidates(candidates):
     # Candidate identities are plugin-computed. Distinct attempts of one identity
-    # are repeated observations, not separate source identities.
+    # are repeated observations, not separate source identities. Callers pass rows
+    # oldest first, so on an equal state the later review (a validator) wins.
     priority = {'runtime_confirmed': 5, 'source_supported': 4, 'rejected': 3, 'inconclusive': 2, 'candidate': 1}
     unique = {}
     for raw in candidates:
         cid = raw['candidateId']
         old = unique.get(cid)
-        if old is None or priority.get(raw.get('evidenceState'), 0) > priority.get(old.get('evidenceState'), 0):
+        if old is None or priority.get(raw.get('evidenceState'), 0) >= priority.get(old.get('evidenceState'), 0):
             unique[cid] = deepcopy(raw)
         if old:
             unique[cid].setdefault('provenance', {})['workerAttemptIds'] = sorted(set(old.get('provenance', {}).get('workerAttemptIds', []) + raw.get('provenance', {}).get('workerAttemptIds', [])))
@@ -48,6 +49,31 @@ def reduce_candidates(candidates):
     result = {'retained': kept, 'absorbed': absorbed, 'rejected': rejected}
     result['problems'] = conservation_check(candidates, result)
     return result
+
+
+def _span(location):
+    start = location.get('startLine') or 0
+    return start, location.get('endLine') or start
+
+
+def possible_duplicates(rows):
+    """Pairs of live candidates whose first locations overlap in one file.
+
+    Different rule IDs or anchors are never merged here: a validator decides,
+    and records a merge with provenance.subsumes.
+    """
+    live = [r for r in rows if r.get('evidenceState') in {'candidate', 'source_supported', 'runtime_confirmed'} and r.get('locations')]
+    pairs = []
+    for i, a in enumerate(live):
+        for b in live[i + 1:]:
+            la, lb = a['locations'][0], b['locations'][0]
+            (sa, ea), (sb, eb) = _span(la), _span(lb)
+            if la.get('path') == lb.get('path') and sa <= eb and sb <= ea:
+                # Sealed findings carry findingId; unsealed rows carry candidateId.
+                ids = [r.get('candidateId') or r.get('findingId') for r in (a, b)]
+                pairs.append({'candidateIds': sorted(ids), 'path': la.get('path'),
+                              'lines': [max(sa, sb), min(ea, eb)]})
+    return sorted(pairs, key=lambda p: (p['path'], p['lines'], p['candidateIds']))
 
 
 def conservation_check(sources, result):

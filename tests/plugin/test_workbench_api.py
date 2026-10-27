@@ -30,6 +30,34 @@ def api(tmp_path, monkeypatch):
         yield module, client
 
 
+def test_empty_workbench_reads_succeed(api):
+    module, client = api
+    summary = client.get(PREFIX + '/summary').json()
+    assert summary['profile'] == 'default'
+    assert summary['scans'] == summary['findings'] == 0
+    assert summary['open'] == {}
+    for path in ['/scans', '/findings', '/repositories']:
+        response = client.get(PREFIX + path)
+        assert response.status_code == 200, (path, response.text)
+        assert response.json()['items'] == []
+
+
+def test_browse_lists_folders_on_the_gateway_machine(api, tmp_path):
+    module, client = api
+    base = tmp_path / 'browse'
+    (base / 'b-repo' / '.git').mkdir(parents=True)
+    (base / 'A-dir').mkdir(); (base / '.hidden').mkdir(); (base / 'file.txt').write_text('x')
+    body = client.get(PREFIX + '/browse', params={'path': str(base)}).json()
+    assert body['path'] == str(base.resolve())
+    assert body['parent'] == str(base.resolve().parent)
+    assert body['repo'] is False and body['roots']
+    assert [(i['name'], i['repo']) for i in body['items']] == [('A-dir', False), ('b-repo', True)]
+    assert body['items'][1]['path'] == str(base.resolve() / 'b-repo')
+    assert client.get(PREFIX + '/browse').json()['path'] == str(Path.home().resolve())
+    for missing in [base / 'file.txt', base / 'nope']:
+        assert client.get(PREFIX + '/browse', params={'path': str(missing)}).status_code == 400
+
+
 def test_standalone_health_and_real_scan(api, tmp_path):
     module, client = api
     assert client.get(PREFIX + '/health').json() == {'ok': True, 'plugin': 'hermes-security'}
@@ -38,8 +66,13 @@ def test_standalone_health_and_real_scan(api, tmp_path):
     response = client.post(PREFIX + '/scans', json={'path': str(root)})
     assert response.status_code == 200, response.text
     scan = response.json()
-    assert scan['status'] == 'awaiting_analysis'
-    assert client.get(PREFIX + '/scans/' + scan['scanId']).json() == scan
+    # The route answers before the inventory; the scan is ready once the background thread finishes.
+    assert scan['status'] == 'created'
+    thread = module.get_service()._dependency_threads.get(scan['scanId'])
+    if thread:
+        thread.join(10)
+    scan = client.get(PREFIX + '/scans/' + scan['scanId']).json()
+    assert scan['status'] == 'awaiting_analysis' and scan['plan']['inventory']['files'] == 1
     assert client.get(PREFIX + '/summary').json()['scans'] == 1
 
 
@@ -58,7 +91,6 @@ def populated(api, tmp_path):
     candidate = helpers.candidate_for(root)
     candidate['evidenceState'] = 'source_supported'
     service.submit_worker_result(helpers.worker(plan, [candidate]))
-    service.run_detectors(plan['scanId'], ['builtin-secrets'])
     service.finalize(plan['scanId'])
     fid = service.list_findings()['items'][0]['finding_id']
     return module, client, root, plan['scanId'], fid, secret
@@ -83,7 +115,7 @@ def test_all_reads_triage_and_exports(populated):
     paths = ['/health', '/summary', '/scans', '/scans/' + sid,
              '/scans/' + sid + '/activity', '/scans/' + sid + '/coverage',
              '/findings', '/findings/' + fid, '/findings/' + fid + '/patch', '/repositories']
-    paths += ['/scans/' + sid + '?section=' + s for s in ['inventory', 'workers', 'detectors', 'validations', 'candidates', 'findings', 'chains', 'coverage', 'activity', 'manifest', 'report']]
+    paths += ['/scans/' + sid + '?section=' + s for s in ['inventory', 'workers', 'validations', 'candidates', 'findings', 'chains', 'coverage', 'activity', 'manifest', 'report']]
     for path in paths:
         response = client.get(PREFIX + path)
         assert response.status_code == 200, (path, response.text)
@@ -116,11 +148,11 @@ def test_scan_actions_policy_and_events(api, tmp_path, monkeypatch):
     events = []
     monkeypatch.setitem(sys.modules, 'hermes_cli.plugin_events', types.SimpleNamespace(broadcast_plugin_event=lambda *args: events.append(args)))
     root = tmp_path / 'repo'; root.mkdir(); (root / 'a.py').write_text('x = 1\n')
-    response = client.post(PREFIX + '/scans', json={'path': str(root), 'safety_level': 'local-safe'})
-    assert response.status_code == 403 and not events
-    response = client.post(PREFIX + '/scans', json={'path': str(root), 'safety_level': 'local-safe', 'allowLocalValidation': True, 'confirm': 'local-safe'})
+    # The "Run tests to confirm findings" checkbox is the only consent needed.
+    response = client.post(PREFIX + '/scans', json={'path': str(root), 'allow_tests': True})
     assert response.status_code == 200
     sid = response.json()['scanId']
+    assert response.json()['safety_level'] == 'local-safe'
     for action, status in [('cancel', 'canceled'), ('resume', 'awaiting_analysis')]:
         response = client.post(PREFIX + '/scans/' + sid + '/' + action)
         assert response.status_code == 200
@@ -149,7 +181,7 @@ def test_sql_filters_and_pagination(populated):
     row = service.list_findings()['items'][0]
     filters = {'q': row['title'], 'severity': row['severity'], 'evidenceState': row['evidence_state'],
                'validationLevel': 'static', 'repo': row['repo_key'], 'owasp': row['owasp'][0],
-               'source': 'worker', 'chained': 'false', 'status': 'open'}
+               'chained': 'false', 'status': 'open'}
     for key, value in filters.items():
         result = client.get(PREFIX + '/findings', params={key: value, 'limit': 1}).json()
         assert result['total'] == 1 and len(result['items']) == 1, (key, result)
@@ -237,11 +269,10 @@ def test_sql_trace_filters_precede_limit(populated, monkeypatch):
             conn.set_trace_callback(queries.append)
             yield conn
     monkeypatch.setattr(service.store, '_connection', traced)
-    response = client.get(PREFIX + '/findings', params={'validationLevel': 'static', 'source': 'worker', 'limit': 1, 'offset': 1})
+    response = client.get(PREFIX + '/findings', params={'validationLevel': 'static', 'limit': 1, 'offset': 1})
     assert response.json() == {'items': [], 'total': 1}
     query = next(q for q in queries if 'ORDER BY f.rowid DESC LIMIT 1 OFFSET 1' in q)
     assert "json_extract(f.data,'$.validation.level')='static'" in query
-    assert "'worker'='worker'" in query
     assert ',f.data,' not in query.split(' FROM findings')[0]
     assert not query.startswith('SELECT f.data')
     queries.clear()
@@ -273,9 +304,7 @@ print(module.health())
 def test_dashboard_confirmation_required(api, tmp_path, confirm):
     module, client = api
     root = tmp_path / 'repo'; root.mkdir(); (root / 'app.py').write_text('x=1\n')
-    body = {'path': str(root), 'safetyLevel': 'local-safe', 'allowLocalValidation': True, 'confirm': confirm}
-    assert client.post(PREFIX + '/scans', json=body).status_code == 400
-    sid = module.get_service().start_scan(path=str(root), safety_level='active-authorized')['scanId']
+    sid = module.get_service().start_scan(path=str(root), allow_tests=True)['scanId']
     for suffix in ['authorize-validation', 'run-validation', 'grants/missing/revoke']:
         response = client.post(PREFIX + '/scans/' + sid + '/' + suffix, json={'confirm': confirm})
         assert response.status_code == 400
@@ -287,37 +316,33 @@ def test_dashboard_grant_lifecycle_and_level_boundaries(api, tmp_path):
     ids = {}
     for level in ['static', 'local-safe', 'active-authorized']:
         body: dict = {'path': str(root), 'safetyLevel': level}
-        if level == 'local-safe':
-            body.update(allowLocalValidation=True, confirm='local-safe')
         response = client.post(PREFIX + '/scans', json=body)
         assert response.status_code == 200, response.text
         ids[level] = response.json()['scanId']
     for level, sid in ids.items():
         url = PREFIX + '/scans/' + sid
-        response = client.post(url + '/authorize-validation', json={'confirm': sid, 'origin': 'http://127.0.0.1:8765', 'minutes': 30, 'maxRequests': 20})
-        if level != 'active-authorized':
-            assert response.status_code == 403
-        else:
-            assert response.status_code == 200, response.text
-            grant = response.json()
-            assert grant['createdBy'] == 'dashboard'
-            assert grant['actions'] == ['http-probe']
-            assert client.get(url + '/grants').json()['items'] == [grant]
-            wrong = PREFIX + '/scans/' + ids['static'] + '/grants/' + grant['grantId'] + '/revoke'
-            assert client.post(wrong, json={'confirm': ids['static']}).status_code == 400
-            revoke = url + '/grants/' + grant['grantId'] + '/revoke'
-            assert client.post(revoke, json={'confirm': sid}).json()['revoked'] is True
-            assert client.get(url + '/grants').json()['items'][0]['revoked'] is True
+        # Any open scan can be pointed at the user's running app; defaults are fixed.
+        response = client.post(url + '/authorize-validation', json={'confirm': sid, 'origin': 'http://127.0.0.1:8765'})
+        assert response.status_code == 200, response.text
+        grant = response.json()
+        assert grant['createdBy'] == 'dashboard'
+        assert grant['actions'] == ['http-probe'] and grant['maxRequests'] == 200
+        assert client.get(url + '/grants').json()['items'] == [grant]
+        other = next(s for l, s in ids.items() if l != level)
+        wrong = PREFIX + '/scans/' + other + '/grants/' + grant['grantId'] + '/revoke'
+        assert client.post(wrong, json={'confirm': other}).status_code == 400
+        revoke = url + '/grants/' + grant['grantId'] + '/revoke'
+        assert client.post(revoke, json={'confirm': sid}).json()['revoked'] is True
+        assert client.get(url + '/grants').json()['items'][0]['revoked'] is True
         response = client.post(url + '/run-validation', json={'confirm': sid, 'plans': []})
-        assert response.status_code == (400 if level == 'local-safe' else 403)
+        assert response.status_code == (403 if level == 'static' else 400)
 
 
-def test_dashboard_executes_real_local_controls_but_agent_cannot(api, tmp_path):
+def test_tests_allowed_scan_runs_local_controls_from_dashboard_and_agent(api, tmp_path):
     module, client = api
     root = tmp_path / 'repo'; root.mkdir()
     (root / 'app.py').write_text('def get_invoice(invoice_id):\n    return invoices.get(invoice_id)\n')
-    sid = client.post(PREFIX + '/scans', json={'path': str(root), 'safetyLevel': 'local-safe',
-        'allowLocalValidation': True, 'confirm': 'local-safe'}).json()['scanId']
+    sid = client.post(PREFIX + '/scans', json={'path': str(root), 'allow_tests': True}).json()['scanId']
     service = module.get_service()
     assert service.get_scan(sid)['options']['authorizationSource'] == 'dashboard'
     spec = importlib.util.spec_from_file_location('local_helpers', ROOT / 'tests/integration/test_end_to_end_static.py')
@@ -332,7 +357,8 @@ def test_dashboard_executes_real_local_controls_but_agent_cannot(api, tmp_path):
             'cleanup': {'disposable': True}, 'timeoutS': 2}
     tools = importlib.import_module('.tools', module._PACKAGE_NAME)
     handler = tools.make_handler('security_scan_record_validations', lambda: service)
-    for extra in [{}, {'user_authorized': True}, {'authorization_source': 'dashboard'}]:
+    # Agents cannot smuggle authority fields through the tool schema.
+    for extra in [{'user_authorized': True}, {'authorization_source': 'dashboard'}]:
         result = json.loads(handler({'scan_id': sid, 'plans': [plan], **extra}))
         assert result['ok'] is False
     assert service.store.validations(sid) == []
@@ -347,8 +373,9 @@ def test_dashboard_executes_real_local_controls_but_agent_cannot(api, tmp_path):
     assert 'User authorization source: dashboard' in receipt['notes']
     assert client.get(PREFIX + '/scans/' + sid, params={'section': 'validations'}).json()['items'] == [receipt]
     assert service.get_scan(sid, 'candidates')['items'][0]['evidenceState'] == 'runtime_confirmed'
-    # A prior user click does not authorize a later agent local-command call.
-    assert json.loads(handler({'scan_id': sid, 'plans': [plan]}))['ok'] is False
+    # The scan allows tests, so the agent may run its own reproductions too.
+    agent = json.loads(handler({'scan_id': sid, 'plans': [plan]}))
+    assert agent['ok'] is True, agent
     service.finalize(sid)
     assert client.post(url, json={'confirm': sid, 'plans': [plan]}).status_code == 409
 
@@ -375,9 +402,7 @@ def test_dashboard_start_cannot_accept_authority_fields(api, tmp_path):
     root = tmp_path / 'repo'; root.mkdir(); (root / 'app.py').write_text('x=1\n')
     for field in ['user_authorized', 'authorization_source']:
         assert client.post(PREFIX + '/scans', json={'path': str(root), field: True}).status_code == 400
-    for body in [{'safetyLevel': 'local-safe', 'allowLocalValidation': True},
-                 {'safety_level': 'local-safe', 'allowLocalValidation': True},
-                 {'safetyLevel': 'static', 'safety_level': 'local-safe'}]:
+    for body in [{'safetyLevel': 'static', 'safety_level': 'local-safe'}, {'allow_tests': 'yes'}]:
         assert client.post(PREFIX + '/scans', json={'path': str(root), **body}).status_code == 400
 
 
@@ -431,3 +456,137 @@ def test_dashboard_http_grant_runs_bounded_agent_plan(api, tmp_path):
 def test_manifest_contract():
     manifest = json.loads((ROOT / 'dashboard/manifest.json').read_text())
     assert manifest['name'] == 'hermes-security' and manifest['api'] == 'plugin_api.py'
+
+
+def test_new_scan_folders_progress_and_chat_link(api, tmp_path):
+    module, client = api
+    root = tmp_path / 'app'
+    (root / 'src').mkdir(parents=True)
+    (root / 'node_modules').mkdir()
+    (root / '.git').mkdir()
+    (root / 'src' / 'main.py').write_text('print(1)\n')
+    assert client.get(PREFIX + '/folders', params={'path': str(root)}).json()['items'] == ['src']
+    assert client.get(PREFIX + '/folders', params={'path': str(root / 'missing')}).status_code >= 400
+    scan = client.post(PREFIX + '/scans', json={'path': str(root)}).json()
+    progress = scan['progress']
+    assert [s['label'] for s in progress['steps']][:2] == ['Preparing scan', 'Building threat model']
+    assert progress['steps'][0]['state'] == 'active'
+    assert all(s['state'] == 'pending' for s in progress['steps'][1:])
+    linked = client.post(PREFIX + f"/scans/{scan['scanId']}/session", json={'sessionId': 'rt_1', 'storedSessionId': 'st_1'}).json()
+    assert linked['options']['session'] == {'sessionId': 'rt_1', 'storedSessionId': 'st_1'}
+    assert client.post(PREFIX + f"/scans/{scan['scanId']}/session", json={'bogus': 1}).status_code >= 400
+
+
+def test_summary_counts_open_findings_by_severity(populated):
+    module, client, root, sid, fid, secret = populated
+    finding = client.get(PREFIX + '/findings/' + fid).json()
+    finding = finding.get('finding', finding)
+    level = finding['severity']['level'] if isinstance(finding.get('severity'), dict) else finding['severity']
+    before = client.get(PREFIX + '/summary').json()['open'].get(level, 0)
+    assert before >= 1
+    assert client.post(PREFIX + '/findings/' + fid + '/triage', json={'state': 'closed', 'note': ''}).status_code == 200
+    assert client.get(PREFIX + '/summary').json()['open'].get(level, 0) == before - 1
+
+
+def test_delete_scan_requires_consent_and_a_stopped_scan(populated):
+    module, client, root, sid, fid, secret = populated
+    service = module.get_service()
+    assert client.post(PREFIX + '/findings/' + fid + '/triage', json={'state': 'closed', 'note': 'done'}).status_code == 200
+    open_sid = client.post(PREFIX + '/scans', json={'path': str(root)}).json()['scanId']
+    assert client.post(PREFIX + f'/scans/{open_sid}/delete', json={}).status_code == 400
+    assert client.post(PREFIX + f'/scans/{open_sid}/delete', json={'confirm': sid}).status_code == 400
+    assert client.post(PREFIX + f'/scans/{open_sid}/delete', json={'confirm': open_sid}).status_code == 409
+    assert client.post(PREFIX + f'/scans/{open_sid}/cancel').status_code == 200
+    assert client.post(PREFIX + f'/scans/{open_sid}/delete', json={'confirm': open_sid}).json()['deleted'] is True
+    assert client.get(PREFIX + '/scans/' + open_sid).status_code == 404
+    directory = module.importlib.import_module('.store.artifacts', module._PACKAGE_NAME).scan_dir(service.data_dir, sid)
+    assert directory.exists()
+    result = client.post(PREFIX + f'/scans/{sid}/delete', json={'confirm': sid}).json()
+    assert result['deleted'] is True and result['findings'] >= 1 and 'filesLeft' not in result
+    assert not directory.exists()
+    assert client.get(PREFIX + '/findings').json()['total'] == 0
+    assert client.get(PREFIX + '/summary').json()['scans'] == 0
+    assert client.get(PREFIX + '/repositories').json()['total'] == 0
+    with service.store._connection() as conn:
+        assert conn.execute('SELECT count(*) FROM triage').fetchone()[0] == 0
+        for table in ('events', 'inventory_files', 'worker_attempts', 'candidates', 'seals', 'snapshots'):
+            assert conn.execute('SELECT count(*) FROM ' + table).fetchone()[0] == 0, table
+
+
+def test_delete_keeps_triage_a_remaining_scan_still_reports(populated, tmp_path):
+    module, client, root, sid, fid, secret = populated
+    service = module.get_service()
+    spec = importlib.util.spec_from_file_location('security_acceptance_helpers', ROOT / 'tests/integration/test_end_to_end_static.py')
+    helpers = importlib.util.module_from_spec(spec); spec.loader.exec_module(helpers)
+    plan = service.start_scan(path=str(root))
+    candidate = helpers.candidate_for(root); candidate['evidenceState'] = 'source_supported'
+    service.submit_worker_result(helpers.worker(plan, [candidate], attempt='att_second'))
+    service.finalize(plan['scanId'])
+    assert client.post(PREFIX + '/findings/' + fid + '/triage', json={'state': 'accepted_risk', 'note': ''}).status_code == 200
+    assert client.post(PREFIX + f'/scans/{sid}/delete', json={'confirm': sid}).status_code == 200
+    assert client.get(PREFIX + '/findings/' + fid).json()['triage']['state'] == 'accepted_risk'
+
+
+def test_repository_and_folder_filters(populated, tmp_path):
+    module, client, root, sid, fid, secret = populated
+    other = tmp_path / 'other'; (other / 'lib').mkdir(parents=True); (other / 'lib' / 'x.py').write_text('x = 1\n')
+    client.post(PREFIX + '/scans', json={'path': str(other)})
+    repos = {r['root']: r['repo_key'] for r in client.get(PREFIX + '/repositories').json()['items']}
+    key = repos[str(root.resolve())]
+    rows = client.get(PREFIX + '/scans', params={'repo': key}).json()
+    assert rows['total'] == 1 and rows['items'][0]['scan_id'] == sid
+    assert client.get(PREFIX + '/scans', params={'repo': repos[str(other.resolve())]}).json()['total'] == 1
+    service = module.get_service()
+    with service.store._connection() as conn:
+        conn.execute("UPDATE findings SET path='src/api/app.py'")
+    folders = client.get(PREFIX + '/finding-folders', params={'repo': key}).json()['items']
+    assert [(f['folder'], f['count']) for f in folders] == [('src', 1), ('src/api', 1)]
+    assert client.get(PREFIX + '/finding-folders', params={'repo': 'nope'}).json()['items'] == []
+    for folder, total in [('src', 1), ('src/api', 1), ('src/', 1), ('sr', 0), ('src/a', 0), ('lib', 0)]:
+        assert client.get(PREFIX + '/findings', params={'folder': folder}).json()['total'] == total, folder
+
+
+def test_clone_rejects_unsafe_addresses_with_a_readable_message(api, tmp_path):
+    module, client = api
+    clone = module.importlib.import_module('.target.clone', module._PACKAGE_NAME)
+    assert clone.parse_url('owner/repo') == ('https://github.com/owner/repo', 'github.com', ['owner', 'repo'])
+    assert clone.parse_url('git@gitlab.com:team/app.git')[1:] == ('gitlab.com', ['team', 'app'])
+    assert clone.parse_url('https://example.com/a/b/c.git')[2] == ['a', 'b', 'c']
+    # One repository however it is written, so asking again updates the earlier clone.
+    assert clone._identity('owner/repo') == clone._identity('https://github.com/owner/repo.git') == clone._identity('git@github.com:Owner/Repo.git')
+    assert clone._identity('owner/repo') != clone._identity('https://gitlab.com/owner/repo')
+    for bad in ['file:///etc', 'C:/repo', '/tmp/repo', '--upload-pack=x', 'ext::sh -c id', 'https://user:pw@github.com/o/r',
+                'https://github.com/', 'https://github.com/o/..', 'ftp://example.com/o/r', '']:
+        with pytest.raises(clone.CloneError):
+            clone.parse_url(bad)
+    response = client.post(PREFIX + '/clone', json={'url': 'file:///etc/passwd'})
+    assert response.status_code == 400
+    assert response.json()['error']['code'] == 'clone_failed' and 'https://' in response.json()['error']['message']
+    assert client.post(PREFIX + '/clone', json={'url': 'o/r', 'extra': 1}).status_code == 400
+    assert client.get(PREFIX + '/clones').json() == {'items': []}
+    service = module.get_service()
+    (service.data_dir / 'repos' / 'github.com' / 'o' / 'r' / '.git').mkdir(parents=True)
+    (service.data_dir / 'repos' / 'github.com' / 'o' / 'r.partial-1234' / '.git').mkdir(parents=True)
+    assert client.get(PREFIX + '/clones').json()['items'] == [{'path': str(service.data_dir / 'repos' / 'github.com' / 'o' / 'r'), 'name': 'o/r'}]
+
+
+def test_scan_subagent_route_is_checked_and_reaches_the_agent(api, tmp_path, monkeypatch):
+    module, client = api
+    routes = {'installed': True, 'backend': 'model_map', 'available': True, 'default': 'fast',
+              'choices': [{'name': 'fast', 'description': 'Cheap', 'detail': 'openrouter/x'}]}
+    monkeypatch.setattr(module, '_delegation_info', lambda: routes)
+    assert client.get(PREFIX + '/delegation').json() == routes
+    root = tmp_path / 'repo'; root.mkdir(); (root / 'a.py').write_text('x = 1\n')
+    for bad in [{'backend': 'model_map', 'name': 'deep'}, {'backend': 'profile_routes', 'name': 'fast'}, 'fast']:
+        assert client.post(PREFIX + '/scans', json={'path': str(root), 'delegate': bad}).status_code == 400, bad
+    scan = client.post(PREFIX + '/scans', json={'path': str(root), 'delegate': {'backend': 'model_map', 'name': 'fast'}}).json()
+    assert scan['options']['delegate'] == {'backend': 'model_map', 'name': 'fast'}
+    step = client.get(PREFIX + '/scans/' + scan['scanId'], params={'section': 'next'}).json()
+    assert step['step'] == 'dispatch' and step['delegate']['name'] == 'fast'
+    assert 'Set "option": "fast" on every delegate_task task' in step['how']
+    summary = client.get(PREFIX + '/scans/' + scan['scanId'], params={'section': 'summary'}).json()
+    assert summary['delegate'] == {'backend': 'model_map', 'name': 'fast'}
+    monkeypatch.setattr(module, '_delegation_info', lambda: {**routes, 'installed': False})
+    assert client.post(PREFIX + '/scans', json={'path': str(root), 'delegate': {'backend': 'model_map', 'name': 'fast'}}).status_code == 400
+    plain = client.post(PREFIX + '/scans', json={'path': str(root)}).json()
+    assert 'delegate' not in client.get(PREFIX + '/scans/' + plain['scanId'], params={'section': 'next'}).json()

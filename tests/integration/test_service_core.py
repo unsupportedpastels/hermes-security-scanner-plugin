@@ -1,7 +1,7 @@
 from pathlib import Path
 import pytest
 from hermes_security.service import SecurityService
-from hermes_security.errors import Conflict, PolicyDenied, SealedError
+from hermes_security.errors import Conflict, PolicyDenied, SealedError, ValidationError
 
 
 def test_start_snapshot_cancel_resume(tmp_path):
@@ -36,4 +36,7 @@ def test_local_policy_and_profile_isolation(tmp_path, monkeypatch):
     assert resolve_data_dir() == tmp_path / 'B' / store
     root = tmp_path / 'repo'; root.mkdir()
     service = SecurityService(tmp_path / 'data')
-    with pytest.raises(PolicyDenied): service.start_scan(path=str(root), safety_level='local-safe')
+    # One switch: allow_tests (or an explicit level) enables local tests.
+    assert service.get_scan(service.start_scan(path=str(root), allow_tests=True)['scanId'])['safety_level'] == 'local-safe'
+    assert service.get_scan(service.start_scan(path=str(root))['scanId'])['safety_level'] == 'static'
+    with pytest.raises(ValidationError): service.start_scan(path=str(root), allow_tests='yes')

@@ -7,7 +7,9 @@ import hashlib
 import importlib
 import importlib.util
 import json
+import os
 from pathlib import Path
+import string
 import sys
 import threading
 
@@ -111,27 +113,66 @@ def summary():
 
 
 @router.get('/scans')
-def scans(q: str | None = None, status: str | None = None, mode: str | None = None,
+def scans(q: str | None = None, status: str | None = None, mode: str | None = None, repo: str | None = None,
           limit: int = Query(50, ge=0, le=100), offset: int = Query(0, ge=0)):
-    return get_service().workbench_scans(q=q, status=status, mode=mode, limit=limit, offset=offset)
+    return get_service().workbench_scans(q=q, status=status, mode=mode, repo_key=repo, limit=limit, offset=offset)
+
+
+def _delegation_info():
+    """Subagent routes the user may pick for a scan, from the official advanced-delegation plugin.
+
+    Only the routes of the profile's active delegation mode are offered: delegate_task's per-task
+    parameter follows config.yaml, so a route of the other mode could not be passed anyway.
+    """
+    info = {'installed': False, 'backend': 'default', 'available': False, 'choices': [], 'default': None}
+    try:
+        from agent.delegation_backends import list_backends
+        from hermes_cli.config import load_config
+        from hermes_cli.plugins import discover_plugins
+    except ImportError:
+        return info
+    discover_plugins()
+    backends = {b.name: b for b in list_backends()}
+    info['installed'] = bool({'model_map', 'profile_routes'} & backends.keys())
+    delegation = load_config().get('delegation') or {}
+    backend = str(delegation.get('backend') or 'default').strip().lower() or 'default'
+    block = (delegation.get('backends') or {}).get(backend) or {}
+    info.update(backend=backend, available=bool(backends.get(backend) and backends[backend].available))
+    rows = block.get('options') if backend == 'model_map' else block.get('profiles') if backend == 'profile_routes' else None
+    for row in rows if isinstance(rows, list) else []:
+        if isinstance(row, dict) and isinstance(row.get('name'), str) and row['name'].strip():
+            # Never return api_key or other route secrets: names, descriptions and the model only.
+            detail = '/'.join(str(row[k]) for k in ('provider', 'model') if isinstance(row.get(k), str) and row[k])
+            info['choices'].append({'name': row['name'].strip(), 'description': str(row.get('description') or ''), 'detail': detail})
+    info['default'] = block.get('default') if isinstance(block.get('default'), str) else None
+    return info
+
+
+@router.get('/delegation')
+def delegation():
+    return _delegation_info()
 
 
 @router.post('/scans')
 def start_scan(body: dict = Body(...)):
     service = get_service()
     opts = dict(body)
+    if opts.get('delegate') is not None:
+        # Re-check against config.yaml: a route deleted since the page loaded must not reach the agent.
+        info, chosen = _delegation_info(), opts['delegate']
+        if (not isinstance(chosen, dict) or not info['installed'] or chosen.get('backend') != info['backend'] or
+                chosen.get('name') not in {c['name'] for c in info['choices']}):
+            raise ValidationError('unknown subagent route')
     if 'safetyLevel' in opts:
         if 'safety_level' in opts:
             raise ValidationError('ambiguous safety level')
         opts['safety_level'] = opts.pop('safetyLevel')
     if {'user_authorized', 'authorization_source'} & opts.keys():
         raise ValidationError('authority fields are not request options')
-    confirmed = opts.pop('confirm', None)
-    authorize = opts.get('safety_level') == 'local-safe' and opts.get('allowLocalValidation') is True
-    if authorize and confirmed != 'local-safe':
-        return _consent_error()
+    opts.pop('confirm', None)  # legacy clients; the "run tests" checkbox is the consent
+    authorize = opts.get('allow_tests') is True or opts.get('allowLocalValidation') is True
     created = service.start_scan(**opts, user_authorized=authorize,
-                                 authorization_source='dashboard' if authorize else None)
+                                 authorization_source='dashboard' if authorize else None, background=True)
     result = service.get_scan(created['scanId'])
     _broadcast('scan.updated', {'scanId': created['scanId']})
     return result
@@ -155,11 +196,9 @@ def authorize_validation(scan_id: str, body: dict = Body(...)):
     if body.get('confirm') != scan_id:
         return _consent_error()
     service = get_service()
-    if service.get_scan(scan_id)['safety_level'] != 'active-authorized':
-        return _level_error('active-authorized')
     if set(body) - {'confirm', 'origin', 'minutes', 'maxRequests'}:
         raise ValidationError('unknown authorization option')
-    minutes, cap = body.get('minutes', 30), body.get('maxRequests', 20)
+    minutes, cap = body.get('minutes', 60), body.get('maxRequests', 200)
     if type(minutes) is not int or not 1 <= minutes <= 240 or type(cap) is not int or not 1 <= cap <= 200:
         raise ValidationError('invalid grant limits')
     # Share CLI origin syntax: do not silently discard paths or credentials.
@@ -193,7 +232,7 @@ def run_validation(scan_id: str, body: dict = Body(...)):
     if body.get('confirm') != scan_id:
         return _consent_error()
     service = get_service()
-    if service.get_scan(scan_id)['safety_level'] != 'local-safe':
+    if service.get_scan(scan_id)['safety_level'] == 'static':
         return _level_error('local-safe')
     plans = body.get('plans')
     if (set(body) != {'confirm', 'plans'} or not isinstance(plans, list) or not plans or
@@ -229,6 +268,85 @@ def resume(scan_id: str):
     return result
 
 
+@router.post('/scans/{scan_id}/delete')
+def delete_scan(scan_id: str, body: dict = Body(...)):
+    if body.get('confirm') != scan_id or set(body) != {'confirm'}:
+        return _consent_error()
+    result = get_service().delete_scan(scan_id)
+    _broadcast('scan.updated', {'scanId': scan_id})
+    return result
+
+
+@router.post('/clone')
+def clone(body: dict = Body(...)):
+    """Clone a repository URL into the profile (or update an earlier clone) for scanning."""
+    if set(body) != {'url'}:
+        raise ValidationError('url is required')
+    CloneError = importlib.import_module('.target.clone', _PACKAGE_NAME).CloneError
+    try:
+        return get_service().clone_repository(body['url'])
+    except CloneError as exc:
+        # Our own messages, with credentials stripped: show them so the user can fix the URL or access.
+        return JSONResponse({'error': {'code': 'clone_failed', 'message': str(exc)}}, status_code=400)
+
+
+@router.get('/clones')
+def clones():
+    return get_service().list_clones()
+
+
+@router.post('/scans/{scan_id}/session')
+def link_session(scan_id: str, body: dict = Body(...)):
+    if set(body) - {'sessionId', 'storedSessionId'} or not isinstance(body.get('sessionId'), str):
+        raise ValidationError('sessionId is required')
+    result = get_service().link_session(scan_id, body['sessionId'], body.get('storedSessionId'))
+    _broadcast('scan.updated', {'scanId': scan_id})
+    return result
+
+
+@router.get('/folders')
+def folders(path: str = Query(..., min_length=1, max_length=4096)):
+    """Top-level folders of a repository, for the "Scan area" picker."""
+    root = Path(path).expanduser()
+    if not root.is_dir():
+        raise ValidationError('folder not found')
+    skip = {'.git', 'node_modules', '__pycache__', '.venv', 'venv', 'dist', 'build', 'target', '.next'}
+    try:
+        names = sorted(p.name for p in root.iterdir()
+                       if p.is_dir() and not p.is_symlink() and p.name not in skip and not p.name.startswith('.'))
+    except OSError:
+        raise ValidationError('folder cannot be read') from None
+    return {'root': str(root.resolve()), 'items': names[:500]}
+
+
+@router.get('/browse')
+def browse(path: str | None = Query(None, min_length=1, max_length=4096)):
+    """Subfolders of one folder on the gateway's machine, for the repository picker."""
+    root = Path(path).expanduser() if path else Path.home()
+    if not root.is_dir():
+        raise ValidationError('folder not found')
+    root = root.resolve()
+    items = []
+    try:
+        for p in root.iterdir():
+            try:
+                if p.name.startswith('.') or not p.is_dir():
+                    continue
+                items.append({'name': p.name, 'path': str(p), 'repo': (p / '.git').exists()})
+            except OSError:
+                continue
+    except OSError:
+        raise ValidationError('folder cannot be read') from None
+    items.sort(key=lambda item: item['name'].lower())
+    if os.name == 'nt':
+        roots = os.listdrives() if hasattr(os, 'listdrives') else [d + ':\\' for d in string.ascii_uppercase if os.path.isdir(d + ':\\')]
+    else:
+        roots = ['/']
+    return {'path': str(root), 'parent': str(root.parent) if root.parent != root else None,
+            'home': str(Path.home()), 'repo': (root / '.git').exists(), 'roots': roots,
+            'items': items[:1000], 'truncated': len(items) > 1000}
+
+
 @router.get('/scans/{scan_id}/activity')
 def activity(scan_id: str, after_id: int = Query(0, ge=0), limit: int = Query(200, ge=0, le=500)):
     return get_service().activity(scan_id, after_id=after_id, limit=limit)
@@ -242,11 +360,16 @@ def coverage(scan_id: str):
 @router.get('/findings')
 def findings(q: str | None = None, status: str | None = None, severity: str | None = None,
              evidenceState: str | None = None, validationLevel: str | None = None,
-             repo: str | None = None, owasp: str | None = None, source: str | None = None,
+             repo: str | None = None, folder: str | None = None, owasp: str | None = None,
              chained: bool | None = None, limit: int = Query(50, ge=0, le=100), offset: int = Query(0, ge=0)):
     return get_service().workbench_findings(q=q, triage=status, severity=severity,
-        evidence_state=evidenceState, validation_level=validationLevel, repo_key=repo,
-        owasp=owasp, source=source, chained=chained, limit=limit, offset=offset)
+        evidence_state=evidenceState, validation_level=validationLevel, repo_key=repo, folder=folder,
+        owasp=owasp, chained=chained, limit=limit, offset=offset)
+
+
+@router.get('/finding-folders')
+def finding_folders(repo: str | None = None):
+    return get_service().finding_folders(repo_key=repo)
 
 
 @router.get('/findings/{finding_id}')

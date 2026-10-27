@@ -40,7 +40,7 @@ def test_slash_grant_defaults_and_bounds():
     assert slash(s, "authorize-validation s https://example.test")["ok"]
     assert s.calls[-1] == ("mint_grant", ("s",), {
         "origins": ["https://example.test"], "actions": ["http-probe"],
-        "expires_in_s": 1800, "max_requests": 20, "created_by": "user-command"})
+        "expires_in_s": 3600, "max_requests": 200, "created_by": "user-command"})
     assert slash(s, "authorize-validation s https://example.test --actions http-probe --minutes 240 --max-requests 200")["ok"]
     assert s.calls[-1][2]["expires_in_s"] == 14400
 
@@ -124,7 +124,6 @@ def test_cli_validation_consent_only_explicit(tmp_path, monkeypatch, capsys):
 @pytest.mark.parametrize("argv,method", [
     (["start", "--path", "/repo"], "start_scan"),
     (["get", "--scan", "s"], "get_scan"),
-    (["detectors", "--scan", "s", "--run"], "import_detector_results"),
     (["chains", "--scan", "s"], "propose_chains"),
     (["finalize", "--scan", "s"], "finalize"),
     (["cancel", "--scan", "s"], "cancel"),

@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 import pytest
+from tests.support import make_link, outside_system_dir
 from hermes_security.compat.codex_import import import_codex_bundle
 from hermes_security.domain.validate import validate_document
 from hermes_security.errors import ValidationError
@@ -42,5 +43,5 @@ def test_untrusted_upstream_rejected(tmp_path, mutation):
     if mutation in ('cross-scan','non-finite','secret'): path.write_text(json.dumps(doc))
     if mutation=='duplicate': path.write_text(path.read_text().replace('"schemaVersion": "1.0"','"schemaVersion": "1.0", "schemaVersion": "1.0"'))
     if mutation=='symlink':
-        path.unlink(); path.symlink_to(UPSTREAM/'findings.json')
+        path.unlink(); make_link(path, UPSTREAM/'findings.json')
     with pytest.raises(ValidationError): import_codex_bundle(tmp_path)

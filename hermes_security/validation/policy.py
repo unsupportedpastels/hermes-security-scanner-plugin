@@ -60,10 +60,12 @@ def mint_grant(store, scan_id, *, origins, actions, expires_in_s, max_requests, 
 
 def _argv(argv):
     if not isinstance(argv,list) or not argv or any(not isinstance(a,str) or not a or '\x00' in a for a in argv):
-        raise PolicyDenied('commands must be nonempty argv lists; shell strings denied')
-    forbidden={'curl','wget','nc','ncat','netcat','ssh','scp','sftp','sh','bash','dash','zsh','fish','sudo','su'}
-    if any(PurePath(a).name.lower() in forbidden for a in argv):
-        raise PolicyDenied('network tools and shell commands denied')
+        raise PolicyDenied('commands must be nonempty argv lists')
+    # Normal dev tooling (shells, package runners, curl to localhost) is fine for
+    # testing your own code; only privilege escalation is refused.
+    forbidden={'sudo','su','doas','runas','pkexec'}
+    if any(PurePath(a).name.lower().removesuffix('.exe') in forbidden for a in argv[:1]):
+        raise PolicyDenied('privilege escalation commands are not allowed')
 
 def check_plan(plan, *, grant, safety_level, now):
     """Validate a proposed plan without running target code or performing I/O."""
@@ -77,7 +79,8 @@ def check_plan(plan, *, grant, safety_level, now):
         return
     if safety_level=='static' or level=='static': raise PolicyDenied('static level forbids runtime execution')
     if level!=safety_level: raise PolicyDenied('plan safety level mismatch')
-    if not isinstance(plan.get('cleanup'),dict) or not plan['cleanup']: raise PolicyDenied('missing cleanup policy')
+    plan.setdefault('cleanup',{'strategy':'remove-copy' if kind=='local-command' else 'none-needed'})
+    if not isinstance(plan.get('cleanup'),dict): raise PolicyDenied('cleanup must be an object')
     if not all(isinstance(plan.get(k),dict) and plan[k] for k in ('positiveControl','negativeControl')):
         raise PolicyDenied('runtime confirmation requires paired controls')
     if kind=='http-probe' and level!='active-authorized': raise PolicyDenied('HTTP action requires active-authorized level')
@@ -102,8 +105,7 @@ def check_plan(plan, *, grant, safety_level, now):
             origin=normalize_origin(req.get('url'))
             if origin not in grant.get('origins',[]): raise PolicyDenied('origin not granted (IP literals require exact grant)')
             method=req.get('method','GET')
-            if method not in {'GET','HEAD','OPTIONS','POST'}: raise PolicyDenied('destructive or unsupported method denied')
-            if method=='POST' and req.get('syntheticBody') is not True: raise PolicyDenied('POST requires syntheticBody: true')
+            if method not in {'GET','HEAD','OPTIONS','POST','PUT','PATCH'}: raise PolicyDenied('DELETE and unsupported methods are not allowed')
             headers=req.get('headers',{})
             if not isinstance(headers,dict) or any(k.lower() in {'host','proxy-authorization','connection','transfer-encoding'} for k in headers):
                 raise PolicyDenied('unsafe request headers')

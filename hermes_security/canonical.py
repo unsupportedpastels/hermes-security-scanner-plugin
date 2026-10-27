@@ -14,6 +14,7 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from .fsutil import is_link, set_private
 
 
 def _reject_non_finite(obj: Any) -> None:
@@ -59,7 +60,7 @@ def atomic_write(path: Path, data: bytes | str, mode: int = 0o600) -> None:
     Refuses to replace a symlink so a hostile link cannot redirect the write.
     """
     path = Path(path)
-    if path.is_symlink():
+    if is_link(path):
         raise OSError(f"refusing to write through symlink: {path}")
     if isinstance(data, str):
         data = data.encode("utf-8")
@@ -70,7 +71,7 @@ def atomic_write(path: Path, data: bytes | str, mode: int = 0o600) -> None:
             handle.write(data)
             handle.flush()
             os.fsync(handle.fileno())
-        os.chmod(tmp, mode)
+        set_private(tmp, mode)
         os.replace(tmp, path)
     except BaseException:
         try:

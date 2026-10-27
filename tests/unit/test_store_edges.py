@@ -48,10 +48,51 @@ def test_migration_reentry_and_future_version():
     c.execute("BEGIN IMMEDIATE")
     migrate(c)
     c.commit()
-    assert c.execute("pragma user_version").fetchone()[0] == 1
-    c.execute("pragma user_version=2")
+    assert c.execute("pragma user_version").fetchone()[0] == 3
+    c.execute("pragma user_version=4")
     with pytest.raises(Conflict):
         migrate(c)
+    c.close()
+
+
+def test_version_1_database_upgrades_in_place():
+    from hermes_security.store.migrations import DDL
+    c = sqlite3.connect(":memory:")
+    for statement in DDL:
+        c.execute(statement)
+    c.execute("pragma user_version=1")
+    c.execute("BEGIN IMMEDIATE")
+    migrate(c)
+    c.commit()
+    assert c.execute("pragma user_version").fetchone()[0] == 3
+    assert c.execute("select count(*) from dispatches").fetchone()[0] == 0
+    c.close()
+
+
+def test_database_from_before_the_detector_removal_can_index_findings(tmp_path):
+    """Profiles created before the detector backends were removed still carry
+    findings.detectors (NOT NULL) and detector_runs. The v1 DDL was edited without
+    a migration, so finalize failed indexing any finding on those databases."""
+    from hermes_security.store.migrations import DDL, DDL_V2
+    old = [s.replace("owasp TEXT NOT NULL,", "owasp TEXT NOT NULL, detectors TEXT NOT NULL,") for s in DDL]
+    old.append("CREATE TABLE detector_runs (scan_id TEXT REFERENCES scans(scan_id), receipt_id TEXT NOT NULL, "
+               "data TEXT NOT NULL, PRIMARY KEY(scan_id,receipt_id))")
+    c = sqlite3.connect(tmp_path / "security.db")
+    for statement in old + DDL_V2:
+        c.execute(statement)
+    c.execute("pragma user_version=2")
+    c.commit()
+    c.execute("BEGIN IMMEDIATE")
+    migrate(c)
+    c.commit()
+    assert c.execute("pragma user_version").fetchone()[0] == 3
+    assert "detectors" not in [r[1] for r in c.execute("pragma table_info(findings)")]
+    assert c.execute("select count(*) from sqlite_master where name='detector_runs'").fetchone()[0] == 0
+    c.execute("INSERT INTO repositories VALUES ('r','/repo')")
+    c.execute("INSERT INTO scans(scan_id,repo_key,root,mode,safety_level,status,created_at,target,options) "
+              "VALUES ('s','r','/repo','standard','static','awaiting_analysis','t','{}','{}')")
+    c.execute("INSERT INTO findings(scan_id,occurrence_id,finding_id,severity,evidence_state,title,repo_key,root,path,"
+              "category,cwe,owasp,data) VALUES ('s','o','f','low','source_supported','t','r','/repo','p','c','[]','[]','{}')")
     c.close()
 
 
@@ -153,7 +194,7 @@ def test_occurrences_latest_and_coverage(tmp_path):
     units.append({"unit": "file:x", "state": "reviewed"})
     s.record_coverage(b, units, source="review")
     assert s.list_repositories()["items"][0]["coverage_completeness"] == "complete"
-    s.record_detector_run(b, {"receiptId": "d", "status": "failed"})
+    s.record_coverage(b, [{"unit": "file:y", "state": "deferred"}], source="review")
     assert s.list_repositories()["items"][0]["coverage_completeness"] == "partial"
     assert s.list_findings(q="' OR 1=1 --")["total"] == 0
 

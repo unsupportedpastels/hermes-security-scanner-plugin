@@ -7,6 +7,7 @@ import pytest
 from hermes_security.target import *
 from hermes_security.errors import TargetError
 from hermes_security.target.policy import is_untrusted_instruction_file
+from tests.support import make_link, outside_system_dir
 
 
 def git(root, *args):
@@ -40,7 +41,7 @@ def test_git_never_executes_repo_helpers(tmp_path, monkeypatch):
 
 def test_excerpt_parent_symlinks_and_ranges(tmp_path):
     (tmp_path / 'dir').mkdir(); (tmp_path / 'dir' / 'a').write_text('one\ntwo\n')
-    (tmp_path / 'link').symlink_to(tmp_path / 'dir', target_is_directory=True)
+    make_link(tmp_path / 'link', tmp_path / 'dir', directory=True)
     with pytest.raises(TargetError):
         read_excerpt(tmp_path, 'link/a', 1, 1, inventory_paths={'link/a'})
     for start, end in [(0, 1), (2, 1), (1, 3), (True, 1)]:
@@ -57,7 +58,7 @@ def test_partial_token_at_excerpt_edge(tmp_path):
 
 def test_pem_crosses_excerpt_boundary(tmp_path):
     body = 'AbCdEfGhIjKlMnOpQrStUvWxYz0123456789+/'
-    (tmp_path / 'key').write_text(f'-----BEGIN RSA PRIVATE KEY-----\n{body}\n{body}\n-----END RSA PRIVATE KEY-----\nlast\n')
+    (tmp_path / 'key').write_text(f'-----BEGIN RSA PRIVATE KEY-----\n{body}\n{body}\n-----END RSA PRIVATE KEY-----\nlast\n', newline=chr(10))
     code = read_excerpt(tmp_path, 'key', 2, 3, inventory_paths={'key'})
     assert body not in code
     assert read_excerpt(tmp_path, 'key', 5, 5, inventory_paths={'key'}) == 'last\n'
@@ -98,7 +99,7 @@ def test_hardlinks_classification_and_limits(tmp_path):
 
 
 def test_directory_symlink_not_walked(tmp_path):
-    (tmp_path / 'link').symlink_to('/etc', target_is_directory=True)
+    make_link(tmp_path / 'link', outside_system_dir(), directory=True)
     inv = build_inventory(resolve_target(str(tmp_path)))
     assert inv['files'] == []
     assert inv['excluded'] == [{'path': 'link', 'reason': 'symlink'}]

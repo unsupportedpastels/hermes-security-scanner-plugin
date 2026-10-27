@@ -5,6 +5,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 import pytest
+import sys
+from tests.support import make_link, outside_system_dir
 from hermes_security.canonical import atomic_write, canonical_json, sha256_hex
 from hermes_security.reports import finalize_bundle, verify_bundle, render_markdown, render_sarif, export, validate_finding_sections
 
@@ -16,7 +18,7 @@ def inputs() -> dict:
     def doc(kind, **kw):
         return dict(documentType='hermes-security.' + kind, schemaVersion='1.0', scanId=scan, **kw)
     manifest = doc('scan-manifest', producer={'name': 'hermes-security', 'version': '0.1.0'}, methodologyVersion='hermes-security/method-1', mode='standard', safetyLevel='static', status='completed', target={'root': '/example/app', 'repoKey': '1'*24, 'kind': 'directory', 'revision': None, 'dirty': False, 'snapshotDigest': 'sha256:'+'2'*64, 'scope': [], 'base': None, 'head': None, 'fileCount': 1}, runtime={'provider': None, 'model': None, 'profile': 'default', 'fallbacks': []}, startedAt='2026-10-05T01:00:00Z', finishedAt='2026-10-05T01:01:00Z', counts={}, artifacts={}, supersedes=None)
-    coverage = doc('coverage', completeness='partial', files={'total': 1, 'reviewed': 1, 'deferred': 0, 'unsupported': 0, 'excluded': []}, units=[], standards={'owaspTop10': {'version': '2025', 'categories': [{'id': f'A{i:02}:2025', 'state': 'unknown', 'evidence': [], 'reason': 'Not reviewed'} for i in range(1,11)]}, 'asvs': {'version': '5.0.0', 'controls': []}}, detectors=[], workers=[], gaps=['Authentication review is missing.'])
+    coverage = doc('coverage', completeness='partial', files={'total': 1, 'reviewed': 1, 'deferred': 0, 'unsupported': 0, 'excluded': []}, units=[], standards={'owaspTop10': {'version': '2025', 'categories': [{'id': f'A{i:02}:2025', 'state': 'unknown', 'evidence': [], 'reason': 'Not reviewed'} for i in range(1,11)]}, 'asvs': {'version': '5.0.0', 'controls': []}}, workers=[], gaps=['Authentication review is missing.'])
     return dict(manifest=manifest, findings_doc=doc('findings', findings=[f], retained=[]), coverage=coverage, chains_doc=doc('chains', vocabularyVersion='hermes-security/capabilities-1', chains=[], broken=[]))
 
 
@@ -54,7 +56,7 @@ def test_verify_tamper(tmp_path, mutation):
     elif mutation == 'extra':
         (tmp_path/'exports/extra.csv').write_text('extra')
     else:
-        (tmp_path/'report.md').unlink(); (tmp_path/'report.md').symlink_to('/etc/passwd')
+        (tmp_path/'report.md').unlink(); make_link(tmp_path/'report.md', outside_system_dir()/'win.ini' if sys.platform=='win32' else '/etc/passwd')
     result = verify_bundle(tmp_path)
     assert not result['ok'] and result['problems']
 

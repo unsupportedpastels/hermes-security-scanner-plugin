@@ -53,7 +53,8 @@ def detect_surfaces(inventory_files: list[dict]) -> set[str]:
         name, suffix, text = path.name, path.suffix, str(path)
         tokens = set(filter(None, re.split(r"[^a-z0-9]+", text)))
         if suffix in _SOURCE:
-            found.update({"config", "logging", "web-route"})
+            # Any source file may read config or log; routes need route-like paths (below).
+            found.update({"config", "logging"})
         if name in _MANIFESTS or name.startswith("requirements") or suffix == ".csproj":
             found.add("dependencies")
         if ".github/workflows/" in text or name in {".gitlab-ci.yml", "jenkinsfile", "azure-pipelines.yml"}:
@@ -173,7 +174,7 @@ def build_ledger(surfaces, coverage_units: list[dict], findings: list[dict]) -> 
                    "finding mapped but lane not closed" if cid in mapped_owasp else "no explicit lane coverage unit"}
         elif cid in mapped_owasp and row["state"] == "not_applicable":
             row = {**row, "state": "unknown", "reason": "finding contradicts not_applicable lane"}
-        categories.append({"id": cid, **deepcopy(row)})
+        categories.append({"id": cid, "name": cat["name"], **deepcopy(row)})
     applicable = {c["id"] for c in applicable_controls(surfaces)}
     controls = []
     for control in load_asvs()["controls"]:

@@ -45,6 +45,21 @@ def test_deep_conservation_and_saturation(tmp_path):
     assert stop_reason([1], 3) is None
 
 
+def test_validator_row_wins_over_discovery_row(tmp_path):
+    # Store order (by attempt ID) puts the discovery row first; the validator must still win.
+    root, service, plan = setup(tmp_path)
+    found = candidate_for(root)
+    service.submit_worker_result(worker(plan, [found], attempt='att_a_found'))
+    checked = deepcopy(found)
+    checked['evidenceState'] = 'source_supported'
+    checked['severity']['level'] = 'medium' if found['severity']['level'] == 'low' else 'low'
+    service.submit_worker_result(worker(plan, [checked], attempt='att_z_check', role='validator'))
+    retained = service._reduced(plan['scanId'])['retained']
+    assert len(retained) == 1
+    assert retained[0]['severity']['level'] == checked['severity']['level']
+    assert retained[0]['provenance']['workerAttemptIds'] == ['att_a_found', 'att_z_check']
+
+
 def test_diff_all_paths_attribution_and_full_shas(tmp_path):
     root = tmp_path / 'repo'; root.mkdir()
     def git(*args):
@@ -75,21 +90,27 @@ def test_diff_all_paths_attribution_and_full_shas(tmp_path):
 
 
 def test_validation_authority_and_real_local_controls(tmp_path):
-    root, service, plan = setup(tmp_path, safety_level='local-safe', allowLocalValidation=True)
+    root, service, plan = setup(tmp_path)
     service.submit_worker_result(worker(plan, [candidate_for(root)]))
     cid = service.get_scan(plan['scanId'], 'candidates')['items'][0]['candidateId']
-    local = {'candidateId': cid, 'level': 'local-safe', 'kind': 'local-command',
+    local = {'candidateId': cid, 'kind': 'local-command',
              'commands': [[sys.executable, '-c', 'print("MARKER")'], [sys.executable, '-c', 'print("negative")']],
              'positiveControl': {'commandIndex': 0, 'expectedMarker': 'MARKER'}, 'negativeControl': {'commandIndex': 1, 'expectedMarker': 'MARKER'},
-             'cleanup': {'disposable': True}, 'timeoutS': 2}
+             'timeoutS': 30}
+    # A scan started without tests never runs code, even if the agent asks.
     with pytest.raises(PolicyDenied): service.record_validations(plan['scanId'], plans=[local])
+    plan = service.start_scan(path=str(root), allow_tests=True)
+    service.submit_worker_result(worker(plan, [candidate_for(root)], attempt='att_tests_allowed'))
+    cid = service.get_scan(plan['scanId'], 'candidates')['items'][0]['candidateId']
+    local['candidateId'] = cid
     active = {**local, 'level': 'active-authorized'}
     with pytest.raises(PolicyDenied): service.record_validations(plan['scanId'], plans=[active])
     # Static checklists are allowed without runtime authorization.
     static = {'candidateId': cid, 'level': 'static', 'kind': 'static', 'checks': {k: True for k in ('source', 'control', 'sink', 'boundary', 'counterevidence')}}
     service.record_validations(plan['scanId'], plans=[static])
     assert service.get_scan(plan['scanId'], 'candidates')['items'][0]['evidenceState'] == 'source_supported'
-    recorded = service.record_validations(plan['scanId'], plans=[local], user_authorized=True)
+    # The scan's allow_tests switch is the consent: the agent runs tests itself.
+    recorded = service.record_validations(plan['scanId'], plans=[local])
     assert recorded['receipts'][0]['status'] == 'passed'
     assert service.get_scan(plan['scanId'], 'candidates')['items'][0]['evidenceState'] == 'runtime_confirmed'
     assert service.finalize(plan['scanId'])['manifest']['counts']['high'] == 1
@@ -102,16 +123,14 @@ def test_user_grants_and_revocation(tmp_path):
     assert service.revoke_grant(grant['grantId'])['revoked']
 
 
-def test_missing_sections_retained_and_detector_unavailable(tmp_path):
+def test_missing_sections_retained(tmp_path):
     root, service, plan = setup(tmp_path)
     candidate = candidate_for(root); candidate['summary'] = candidate['rootCause']; candidate['evidenceState'] = 'source_supported'
-    service.submit_worker_result(worker(plan, [candidate]))
-    runs = service.run_detectors(plan['scanId'], ['semgrep', 'not-installed'])
-    assert all(r['status'] == 'unavailable' for r in runs['receipts'])
-    assert all(u['state'] == 'unsupported' for u in service.coverage(plan['scanId'])['units'] if u['kind'] == 'detector')
+    # Refused at submit, while the worker can still fix it, instead of being demoted at finalize.
+    response = service.submit_worker_result(worker(plan, [candidate]))
+    assert response['inserted'] == 0 and 'incomplete sections' in response['rejected'][0]['reason']
     result = service.finalize(plan['scanId'])
-    assert result['manifest']['counts']['high'] == 0 and result['manifest']['counts']['retained'] == 1
-    assert any('incomplete report sections' in g for g in service.coverage(plan['scanId'])['gaps'])
+    assert result['manifest']['counts']['high'] == 0 and result['manifest']['counts']['retained'] == 0
 
 
 def test_lease_excludes_other_service_and_resume_expired(tmp_path):

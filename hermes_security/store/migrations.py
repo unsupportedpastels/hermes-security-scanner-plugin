@@ -2,7 +2,7 @@
 
 from ..errors import Conflict
 
-VERSION = 1
+VERSION = 3
 DDL = [
     """CREATE TABLE repositories (repo_key TEXT PRIMARY KEY, root TEXT NOT NULL)""",
     """CREATE TABLE scans (scan_id TEXT PRIMARY KEY, repo_key TEXT NOT NULL REFERENCES repositories(repo_key), root TEXT NOT NULL,
@@ -19,13 +19,12 @@ DDL = [
     """CREATE TABLE validations (scan_id TEXT REFERENCES scans(scan_id), receipt_id TEXT NOT NULL, candidate_id TEXT, data TEXT NOT NULL, PRIMARY KEY(scan_id,receipt_id))""",
     """CREATE TABLE validation_grants (grant_id TEXT PRIMARY KEY, scan_id TEXT NOT NULL REFERENCES scans(scan_id), data TEXT NOT NULL)""",
     """CREATE TABLE chains (scan_id TEXT PRIMARY KEY REFERENCES scans(scan_id), data TEXT NOT NULL)""",
-    """CREATE TABLE detector_runs (scan_id TEXT REFERENCES scans(scan_id), receipt_id TEXT NOT NULL, data TEXT NOT NULL, PRIMARY KEY(scan_id,receipt_id))""",
     """CREATE TABLE coverage_units (scan_id TEXT REFERENCES scans(scan_id), unit_id TEXT NOT NULL, source TEXT NOT NULL, state TEXT NOT NULL, data TEXT NOT NULL, PRIMARY KEY(scan_id,unit_id))""",
     """CREATE TABLE events (id INTEGER PRIMARY KEY AUTOINCREMENT, scan_id TEXT NOT NULL REFERENCES scans(scan_id), kind TEXT NOT NULL, message TEXT NOT NULL, data TEXT NOT NULL, created_at TEXT NOT NULL)""",
     """CREATE TABLE seals (scan_id TEXT PRIMARY KEY REFERENCES scans(scan_id), manifest_digest TEXT NOT NULL, artifact_dir TEXT NOT NULL, sealed_at TEXT NOT NULL)""",
     """CREATE TABLE findings (scan_id TEXT REFERENCES scans(scan_id), occurrence_id TEXT NOT NULL, finding_id TEXT NOT NULL,
        severity TEXT NOT NULL, evidence_state TEXT NOT NULL, title TEXT NOT NULL, repo_key TEXT NOT NULL, root TEXT NOT NULL,
-       path TEXT NOT NULL, category TEXT NOT NULL, cwe TEXT NOT NULL, owasp TEXT NOT NULL, detectors TEXT NOT NULL,
+       path TEXT NOT NULL, category TEXT NOT NULL, cwe TEXT NOT NULL, owasp TEXT NOT NULL,
        chained INTEGER NOT NULL DEFAULT 0, chain_text TEXT NOT NULL DEFAULT '', sealed_at TEXT, data TEXT NOT NULL,
        PRIMARY KEY(scan_id,occurrence_id))""",
     """CREATE TABLE triage (finding_id TEXT PRIMARY KEY, state TEXT NOT NULL, note TEXT, updated_at TEXT NOT NULL)""",
@@ -34,6 +33,15 @@ DDL = [
     "CREATE INDEX findings_filter ON findings(severity,evidence_state,repo_key,scan_id)",
     "CREATE INDEX findings_identity ON findings(finding_id)",
     "CREATE INDEX events_scan ON events(scan_id,id)",
+]
+# v2: delegate dispatches seen through host hooks (worker tracking), and a cheap
+# lookup of open scans by their chat session for automatic continue.
+DDL_V2 = [
+    """CREATE TABLE dispatches (scan_id TEXT NOT NULL REFERENCES scans(scan_id), attempt_id TEXT NOT NULL, packet_id TEXT,
+       role TEXT, candidate_ids TEXT NOT NULL DEFAULT '[]', parent_session_id TEXT, child_session_id TEXT,
+       status TEXT NOT NULL, dispatched_at TEXT NOT NULL, finished_at TEXT, detail TEXT, PRIMARY KEY(scan_id,attempt_id))""",
+    "CREATE INDEX dispatches_child ON dispatches(child_session_id)",
+    "CREATE INDEX scans_open ON scans(sealed_at,status)",
 ]
 
 
@@ -46,3 +54,16 @@ def migrate(connection):
         for statement in DDL:
             connection.execute(statement)
         connection.execute("PRAGMA user_version=1")
+    if version < 2:
+        for statement in DDL_V2:
+            connection.execute(statement)
+        connection.execute("PRAGMA user_version=2")
+    if version < 3:
+        # v3: the detector backends were removed by editing the v1 DDL in place, so
+        # databases created before that still have findings.detectors (NOT NULL, which
+        # makes every finding insert fail) and the unused detector_runs table.
+        columns = [row[1] for row in connection.execute("PRAGMA table_info(findings)")]
+        if "detectors" in columns:
+            connection.execute("ALTER TABLE findings DROP COLUMN detectors")
+        connection.execute("DROP TABLE IF EXISTS detector_runs")
+        connection.execute("PRAGMA user_version=3")

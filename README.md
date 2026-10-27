@@ -56,7 +56,6 @@ Agent tools in the `security` toolset:
 - `security_scan_get`
 - `security_scan_checkpoint`
 - `security_scan_submit_worker_result`
-- `security_scan_import_detector_results`
 - `security_scan_record_validations`
 - `security_scan_record_chains`
 - `security_scan_finalize`
@@ -64,68 +63,100 @@ Agent tools in the `security` toolset:
 - `security_scan_export`
 
 The `/security` slash command supports `status`,
-`authorize-validation <scan> <origin> [--actions ..] [--minutes N]`, and
-`revoke <grant>`. Only direct user commands/CLI or confirmed Desktop clicks can grant active validation;
-agent tools cannot authorize themselves.
+`authorize-validation <scan> <origin>`, and `revoke <grant>`. Agent tools cannot
+give themselves permission to test a running app.
 
 The service also exposes `hermes security-review ...` and
 `python -m hermes_security ...` for terminal and subagent use. Consult their
 `--help` output once the service is installed for available subcommands.
 Exports include Markdown, JSON, CSV, and SARIF.
 
-## Safety levels
+## Running a scan
 
-- **static** (default): treat target content as untrusted data; do not execute
-  target code, write into its tree, or probe live services.
-- **local-safe**: requires explicit `allowLocalValidation` consent. Run bounded
-  checks in a disposable copy. Network isolation may be best-effort when OS
-  isolation is unavailable; check the receipt rather than assuming a sandbox.
-- **active-authorized**: requires a time-limited user grant for exact origins,
-  actions, and request limits. Off-origin redirects are refused.
+In chat, just ask: *"scan this repo for security issues"*. Or choose **+ Scan** on
+the Desktop **Security** page and fill in:
 
-A finding becomes runtime-confirmed only with a passed receipt, paired positive
-and negative controls, and a non-static validation level. Unrun tests are
-`NOT_RUN`, not proof. Changes to target code remain a separate user action.
+1. **Repository folder** — a folder on the computer running Hermes.
+2. **What to scan** — **Full codebase** or **Recent changes** (uncommitted work, or
+   your branch against the default branch; picked automatically).
+3. **Deep scan** (optional) — slower, more thorough full-codebase passes.
+4. **Run tests to confirm findings** (optional) — the agent writes and runs small
+   reproductions with your normal toolchain, in a temporary copy of the repo.
+5. **Only this folder** and **Extra context** (both optional).
 
-### Using the Desktop page
+Press **Start scan**; a ready-to-send chat draft opens. The agent builds a threat
+model, reviews the in-scope code (see Standard vs deep below), checks each candidate against the code (and
+with tests, if allowed), then traces whether an attacker can reach it. There is
+nothing to install: the review is model reasoning. Vendored code, links, special
+files and files over 8 MB are skipped and listed in the report.
 
-Choose **+ Scan**, then one of:
+The work is split by folder into areas sized to finish in one review, plus one
+baseline reviewer that maps entry points and trust boundaries over the whole
+scope. Up to 6 reviewers run at once.
 
-- **Just read the code (safest)** — prepares a chat draft, as before.
-- **Read the code and test bugs on this computer** — read the warning and check
-  **I understand this will run commands from this code on my computer**, then
-  **Create scan**. The scan is created without running code. Use **Open in chat**
-  to review the code and prepare test steps without finishing the scan. Paste the
-  agent's JSON list into **Test steps (paste from chat)**, inspect its commands,
-  click **Test the bugs on this computer**, and confirm. This runs the existing
-  bounded local-command runner and shows **Test results**, output, and cleanup.
-- **Read the code and test my running app** — check
-  **I understand this will send test requests to my running app** and **Create scan**.
-  Under **Test the bugs**, enter your app address (scheme, host, and port only),
-  minutes (1–240), and request limit (1–200), then click
-  **Allow testing my running app** and confirm. The page shows
-  **App testing: allowed** / **App testing: not allowed**, the address, expiry,
-  and requests used. Use **Open in chat** to ask the agent to test this existing
-  scan using the displayed permission ID. **Stop allowing app testing** confirms
-  and revokes that permission; it cannot undo requests already sent.
+**Standard vs deep.** A standard scan reads a small repository (under about 60k
+lines) in full. In a larger one it reviews production code (source, config, CI,
+IaC, migrations) and skips tests, fixtures, docs, examples, translations,
+generated files, assets and lockfiles, unless one of them holds a committed
+secret. Areas are ranked by what the code does (routes, request input, exec,
+SQL, deserialization, auth, webhooks); every app or top-level folder gets its
+riskiest area read first, then the riskiest of the rest, within a reading budget of 25%
+of production code (at least 300k lines, at most 800k). At most two of the
+riskiest areas get a second independent reviewer, and files a reviewer could not
+finish get one more pass. Everything a standard scan skips is listed in the
+report as excluded by design, with a reason. A deep scan reads every file,
+adds more second reviews and allows up to three follow-up passes.
 
-Only the user's click gives permission. Starting a scan never executes test code
-or sends requests. Local tests require another explicit click for every submitted
-plan; an agent cannot reuse it to execute local commands. App tests may be executed
-by the agent only within an existing, unexpired, unrevoked permission's scope and
-request limit. Finish/seal the scan only after testing; finished scans cannot take
-new results. Static scans gain no execution authority from these controls.
+**Dependency check:** before the review starts, the scan checks your lockfiles
+against published advisories with Google's
+[osv-scanner](https://github.com/google/osv-scanner) and checks declared runtime
+versions (Node, Python, Go, PHP, Ruby) against endoflife.date. The first scan
+downloads a pinned osv-scanner release from GitHub, about 55 MB, refuses it unless
+its SHA-256 matches the pin, and keeps it in the plugin's data folder. Package
+names and versions are sent to api.osv.dev (and api.deps.dev for manifests
+without a lockfile). Advisories are leads: a finding is reported only when the
+review shows your code reaches the vulnerable behaviour. If the check cannot
+run, the report says so and the scan is marked partial. To turn it off, set
+`HERMES_SECURITY_DEPENDENCY_CHECK=off`. Networks that block GitHub can point
+`HERMES_SECURITY_OSV_SCANNER` at an osv-scanner binary installed by an admin.
 
-“On this computer” means the computer running Hermes, which may be a remote host,
-not the Desktop client. A temporary copy and resource limits are **not** filesystem
-isolation against harmful code. Network isolation can be best-effort. Run only
-trusted, reviewed commands. No application is started automatically.
+**If a scan stops halfway:** the plugin remembers where every scan is, so a new
+turn (or **Continue scan** on the scan's page) picks up at the right step:
+start the review packets that have no saved result, check the candidates, trace
+attack paths, then finish. A reviewer that ends without saving its result is
+handed out again.
 
-For CLI users, the unchanged equivalent is `start --safety-level local-safe
---allow-local`, then `validate --scan <id> --file <plans.json> --allow-local`.
-The authenticated dashboard is also a user-authorization surface, not an agent
-API. A confirmation field supplements host session authentication; it is not a
-replacement for it. Never expose the plugin router without the host's auth.
+It can also continue on its own. When a chat turn ends and its scan still has
+work to do, the plugin queues one "Continue security scan" message in that chat.
+It never does this after you press Stop, and after 3 continues that make no
+progress it pauses and shows **Paused — needs attention** until you continue it.
+This needs a one-time switch, because it lets the plugin send messages into your
+chat:
+
+```bash
+hermes config set plugins.entries.hermes-security.allow_gateway_injection true
+```
+
+Without it, a stalled scan shows **Paused — could not continue automatically**
+and waits for **Continue scan** or a message from you. A turn that fails with a
+model provider error does not trigger a continue; send any message to resume.
+
+**Testing a running app (optional):** on an open scan, enter its address under
+**Confirming findings** and click **Allow testing this app** (or run
+`/security authorize-validation <scan> <origin>`). The agent may then send up to 200
+requests to that exact address for an hour; same-site redirects are followed,
+other sites never are. **Stop** revokes it.
+
+What stays in place: repository text is treated as data, never instructions;
+secrets are redacted to a fingerprint; Git hooks/filters never run; findings cite
+exact code from the snapshot; finished reports are sealed. Tests run as you, in a
+temporary copy, with credential-looking environment variables removed — that is
+convenience, not a sandbox, so only enable tests for code you trust.
+
+A finding becomes "Confirmed by test" only with a passing test and a matching
+negative control. Unrun tests are `NOT_RUN`, not proof.
+
+CLI equivalent: `python -m hermes_security start --path <repo> [--mode diff|deep] [--tests] [--context ...]`.
 
 ## Data and limitations
 
@@ -136,13 +167,12 @@ Scan state and artifacts stay under the active profile's
 There is no hosted findings service or automatic ticket publication. Exports
 are user-controlled. Local storage does **not** mean model analysis stays on
 this computer: Hermes's configured provider may receive review context.
-Optional external scanners have their own behavior and network requirements.
 
 Secret values must not be stored in evidence or logs; only their type, location,
 and one-way fingerprint are retained. Treat reports as sensitive regardless.
 Sealed artifacts are immutable; local triage does not rewrite sealed evidence.
 
-Missing scanners, incomplete worker results, and unreviewed code produce gaps.
+Incomplete worker results and unreviewed code produce gaps.
 Zero findings with partial coverage is not a clean bill of health. OWASP Top
 10:2025 and ASVS 5.0.0 mappings record review coverage, not certification.
 Model review can miss issues or misread code; verify conclusions and assumptions.

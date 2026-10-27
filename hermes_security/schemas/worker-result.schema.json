@@ -719,18 +719,13 @@
                 "pattern": "^cand_[a-f0-9]{24}$(?![\\s\\S])"
               }
             },
-            "detectors": {
-              "type": "array",
-              "items": {
-                "type": "string",
-                "maxLength": 20000,
-                "minLength": 1
-              }
-            },
             "subsumes": {
               "type": "array",
               "maxItems": 200,
-              "items": {"type": "string", "pattern": "^cand_[a-f0-9]{24}$(?![\\s\\S])"}
+              "items": {
+                "type": "string",
+                "pattern": "^cand_[a-f0-9]{24}$(?![\\s\\S])"
+              }
             },
             "supersedes": {
               "anyOf": [
@@ -772,8 +767,7 @@
         },
         "source": {
           "enum": [
-            "worker",
-            "detector"
+            "worker"
           ]
         }
       },
