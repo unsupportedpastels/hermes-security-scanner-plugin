@@ -196,21 +196,24 @@ class SecurityStore:
                 "INSERT INTO snapshots VALUES(?,?,?)",
                 (scan_id, target.get("snapshotDigest"), self._json(target)),
             )
-            for item in inventory:
-                path = item.get("path")
-                if (
-                    not isinstance(path, str)
-                    or not path
-                    or "\x00" in path
-                    or Path(path).is_absolute()
-                    or ".." in Path(path).parts
-                ):
-                    raise ValidationError("invalid inventory path")
-                c.execute(
-                    "INSERT INTO inventory_files VALUES(?,?,?)",
-                    (scan_id, path, self._json(item)),
-                )
+            self._insert_inventory(c, scan_id, inventory)
             return self._scan(c, scan_id)
+
+    def _insert_inventory(self, c, scan_id, inventory):
+        for item in inventory:
+            path = item.get("path")
+            if (
+                not isinstance(path, str)
+                or not path
+                or "\x00" in path
+                or Path(path).is_absolute()
+                or ".." in Path(path).parts
+            ):
+                raise ValidationError("invalid inventory path")
+            c.execute(
+                "INSERT INTO inventory_files VALUES(?,?,?)",
+                (scan_id, path, self._json(item)),
+            )
 
     def get_scan(self, scan_id):
         with self._connection() as c:
@@ -253,6 +256,24 @@ class SecurityStore:
                 "UPDATE scans SET status=?,reason=? WHERE scan_id=?",
                 (status, reason, scan_id),
             )
+            return self._scan(c, scan_id)
+
+    def update_scan_options(self, scan_id, values):
+        with self.transaction() as c:
+            row = self._scan(c, scan_id)
+            c.execute("UPDATE scans SET options=? WHERE scan_id=?", (self._json({**row["options"], **values}), scan_id))
+            return self._scan(c, scan_id)
+
+    def set_inventory(self, scan_id, *, target, inventory, options):
+        """Fill in a scan saved before its files were read: snapshot, inventory and the options derived from it."""
+        with self.transaction() as c:
+            row = self._scan(c, scan_id, True)
+            digest = target.get("snapshotDigest")
+            c.execute("UPDATE scans SET target=?,options=?,snapshot_digest=? WHERE scan_id=?",
+                      (self._json(target), self._json({**row["options"], **options}), digest, scan_id))
+            c.execute("UPDATE snapshots SET digest=?,data=? WHERE scan_id=?", (digest, self._json(target), scan_id))
+            c.execute("DELETE FROM inventory_files WHERE scan_id=?", (scan_id,))
+            self._insert_inventory(c, scan_id, inventory)
             return self._scan(c, scan_id)
 
     def set_scan_option(self, scan_id, key, value):

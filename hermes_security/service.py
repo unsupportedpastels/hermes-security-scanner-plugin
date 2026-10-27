@@ -213,7 +213,8 @@ class SecurityService:
         listed = [item for item in excluded if item['reason'] != 'out_of_scope']
         return {'total': len(excluded), 'byReason': reasons, 'items': listed[:limit], 'itemsTruncated': len(listed) > limit}
 
-    def start_scan(self, *, user_authorized=False, authorization_source=None, background_dependencies=False, **opts):
+    def start_scan(self, *, user_authorized=False, authorization_source=None, background_dependencies=False,
+                   background=False, **opts):
         self._safe(opts)
         allowed = {'path', 'mode', 'scope', 'base', 'head', 'safety_level', 'allowLocalValidation', 'allow_tests',
                    'deep_passes', 'budget', 'notes', 'context', 'provider', 'model', 'dependency_check', 'delegate'}
@@ -252,16 +253,21 @@ class SecurityService:
             raise PolicyDenied('plugin data directory must be outside the target tree')
         if mode == 'diff' and resolved['head'] and (resolved['head'] != resolved['revision'] or resolved['dirty']):
             raise Conflict('explicit diff head must be the clean checked-out revision; use a separate worktree')
-        inventory = target.build_inventory(resolved)
-        resolved.update(snapshotDigest=target.snapshot_digest(inventory, resolved), fileCount=len(inventory['files']))
         if user_authorized is True and authorization_source == 'dashboard':
             opts['authorizationSource'] = 'dashboard'
-        options = {**opts, 'surfaces': sorted(ledger.detect_surfaces(inventory['files'])), 'deep_passes': passes,
-                   'excluded': inventory['excluded'], 'truncated': inventory['truncated']}
-        if mode == 'standard':
-            options['planner'] = standard.PLANNER_VERSION
-        if mode == 'diff':
-            options['diff'] = target.diff_manifest(resolved)
+        if background:
+            # Reading a large repository takes minutes, longer than the desktop waits for an answer.
+            # Save the scan now; the background thread inventories it, then checks dependencies,
+            # and next_step holds review until both are saved.
+            options = {**opts, 'deep_passes': passes, 'surfaces': [], 'excluded': [], 'truncated': False,
+                       'preparing': True, 'dependenciesPending': True}
+            scan = self.store.create_scan(mode=mode, safety_level=safety, target=resolved, inventory=[], options=options)
+            self.store.add_event(scan['scan_id'], 'scan.preparing', 'Inventorying the target.')
+            self._start_dependency_check(scan['scan_id'])
+            return self._plan(scan)
+        inventory = target.build_inventory(resolved)
+        resolved.update(snapshotDigest=target.snapshot_digest(inventory, resolved), fileCount=len(inventory['files']))
+        options = {**opts, 'deep_passes': passes, **self._inventory_options(mode, resolved, inventory)}
         scan = self.store.create_scan(mode=mode, safety_level=safety, target=resolved, inventory=inventory['files'], options=options)
         # Dependencies are checked before review so their advisories reach the reviewers as leads.
         if background_dependencies and opts.get('dependency_check', True) and not dependencies.disabled_by_environment():
@@ -271,6 +277,35 @@ class SecurityService:
             self._start_dependency_check(scan['scan_id'])
             return self._plan(scan)
         return self._plan(self._record_dependencies(scan, self._dependency_receipt(scan)))
+
+    @staticmethod
+    def _inventory_options(mode, resolved, inventory):
+        options = {'surfaces': sorted(ledger.detect_surfaces(inventory['files'])),
+                   'excluded': inventory['excluded'], 'truncated': inventory['truncated']}
+        if mode == 'standard':
+            options['planner'] = standard.PLANNER_VERSION
+        if mode == 'diff':
+            options['diff'] = target.diff_manifest(resolved)
+        return options
+
+    def _prepare(self, scan):
+        """Inventory a scan saved before its files were read; ``None`` when the target cannot be read."""
+        resolved = dict(scan['target'])
+        try:
+            inventory = target.build_inventory(resolved)
+            resolved.update(snapshotDigest=target.snapshot_digest(inventory, resolved), fileCount=len(inventory['files']))
+            options = self._inventory_options(scan['mode'], resolved, inventory)
+        except (SecurityError, OSError, ValueError) as exc:
+            reason = f'Could not inventory the target: {exc}'[:500]
+            self.store.update_scan_options(scan['scan_id'], {'preparing': False, 'dependenciesPending': False})
+            self.store.set_scan_status(scan['scan_id'], 'failed', reason=reason)
+            self.store.add_event(scan['scan_id'], 'scan.failed', reason)
+            return None
+        scan = self.store.set_inventory(scan['scan_id'], target=resolved, inventory=inventory['files'],
+                                        options={**options, 'preparing': False})
+        self.store.add_event(scan['scan_id'], 'scan.inventoried', f"Inventoried {len(inventory['files'])} files.",
+                             {'files': len(inventory['files'])})
+        return scan
 
     def _dependency_receipt(self, scan):
         root = scan['root']
@@ -291,13 +326,18 @@ class SecurityService:
         return scan
 
     def _start_dependency_check(self, scan_id):
-        """Run a pending check in the background; a check lost to a gateway restart starts again here."""
+        """Run pending preparation (inventory, then the dependency check) in the background; work lost
+        to a gateway restart starts again here."""
         with self._dependency_lock:
             if scan_id in self._dependency_threads:
                 return
             def run():
                 try:
                     scan = self._scan(scan_id)
+                    if scan['options'].get('preparing'):
+                        scan = self._prepare(scan)
+                        if scan is None:
+                            return
                     try:
                         receipt = self._dependency_receipt(scan)
                     except Exception as exc:  # a crashed check must not leave review waiting forever

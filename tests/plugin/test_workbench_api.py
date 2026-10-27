@@ -66,8 +66,13 @@ def test_standalone_health_and_real_scan(api, tmp_path):
     response = client.post(PREFIX + '/scans', json={'path': str(root)})
     assert response.status_code == 200, response.text
     scan = response.json()
-    assert scan['status'] == 'awaiting_analysis'
-    assert client.get(PREFIX + '/scans/' + scan['scanId']).json() == scan
+    # The route answers before the inventory; the scan is ready once the background thread finishes.
+    assert scan['status'] == 'created'
+    thread = module.get_service()._dependency_threads.get(scan['scanId'])
+    if thread:
+        thread.join(10)
+    scan = client.get(PREFIX + '/scans/' + scan['scanId']).json()
+    assert scan['status'] == 'awaiting_analysis' and scan['plan']['inventory']['files'] == 1
     assert client.get(PREFIX + '/summary').json()['scans'] == 1
 
 
