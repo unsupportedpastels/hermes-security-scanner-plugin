@@ -105,9 +105,28 @@ class SecurityService:
     def _current(self, scan):
         # New files (e.g. a worker's stray notes) are out of scope, not a reason to void the
         # scan; only changed or missing inventory files invalidate the recorded evidence.
-        diff = target.compare_inventory(scan['target'], self.store.inventory(scan['scan_id']))
-        if diff is None or diff['changed']:
+        # Re-hashing every file on each submit took minutes on large repositories; a stat
+        # cache limits reading to files whose size, mtime or file ID moved.
+        cache = self._load_stat_cache(scan['scan_id'])
+        changed, fresh = target.changed_files(scan['target'], self.store.inventory(scan['scan_id']), cache)
+        if fresh != cache:
+            self._save_stat_cache(scan['scan_id'], fresh)
+        if changed:
             raise Conflict('snapshot changed; start a new scan')
+
+    def _load_stat_cache(self, scan_id):
+        try:
+            data = json.loads((self._work(scan_id) / target.STAT_CACHE).read_text('utf-8'))
+        except (OSError, ValueError):
+            return {}
+        files = data.get('files') if isinstance(data, dict) and data.get('version') == 1 else None
+        return files if isinstance(files, dict) else {}
+
+    def _save_stat_cache(self, scan_id, files):
+        path = self._work(scan_id) / target.STAT_CACHE
+        temp = path.with_name(f'{path.name}.{threading.get_ident()}.tmp')
+        temp.write_text(json.dumps({'version': 1, 'files': files}), 'utf-8')
+        os.replace(temp, path)
 
     PHASES = (('preparing', 'Preparing scan'), ('threat_model', 'Building threat model'),
               ('reviewing', 'Reviewing code'), ('validating', 'Validating findings'),
@@ -265,10 +284,12 @@ class SecurityService:
             self.store.add_event(scan['scan_id'], 'scan.preparing', 'Inventorying the target.')
             self._start_dependency_check(scan['scan_id'])
             return self._plan(scan)
-        inventory = target.build_inventory(resolved)
+        stats = {}
+        inventory = target.build_inventory(resolved, stats=stats)
         resolved.update(snapshotDigest=target.snapshot_digest(inventory, resolved), fileCount=len(inventory['files']))
         options = {**opts, 'deep_passes': passes, **self._inventory_options(mode, resolved, inventory)}
         scan = self.store.create_scan(mode=mode, safety_level=safety, target=resolved, inventory=inventory['files'], options=options)
+        self._save_stat_cache(scan['scan_id'], stats)
         # Dependencies are checked before review so their advisories reach the reviewers as leads.
         if background_dependencies and opts.get('dependency_check', True) and not dependencies.disabled_by_environment():
             # osv-scanner can take minutes: answer now, and next_step holds review until the leads are saved.
@@ -292,7 +313,8 @@ class SecurityService:
         """Inventory a scan saved before its files were read; ``None`` when the target cannot be read."""
         resolved = dict(scan['target'])
         try:
-            inventory = target.build_inventory(resolved)
+            stats = {}
+            inventory = target.build_inventory(resolved, stats=stats)
             resolved.update(snapshotDigest=target.snapshot_digest(inventory, resolved), fileCount=len(inventory['files']))
             options = self._inventory_options(scan['mode'], resolved, inventory)
         except (SecurityError, OSError, ValueError) as exc:
@@ -303,6 +325,7 @@ class SecurityService:
             return None
         scan = self.store.set_inventory(scan['scan_id'], target=resolved, inventory=inventory['files'],
                                         options={**options, 'preparing': False})
+        self._save_stat_cache(scan['scan_id'], stats)
         self.store.add_event(scan['scan_id'], 'scan.inventoried', f"Inventoried {len(inventory['files'])} files.",
                              {'files': len(inventory['files'])})
         return scan

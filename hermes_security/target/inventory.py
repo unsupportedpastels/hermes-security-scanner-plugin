@@ -120,8 +120,12 @@ def _directory_paths(root):
             yield (Path(parent) / name).relative_to(root).as_posix()
 
 
-def build_inventory(target, *, max_file_bytes=8_000_000, max_files=100_000, with_signals=True):
-    """``with_signals=False`` skips content signals; snapshot checks only compare hashes."""
+def build_inventory(target, *, max_file_bytes=8_000_000, max_files=100_000, with_signals=True, stats=None):
+    """``with_signals=False`` skips content signals; snapshot checks only compare hashes.
+
+    ``stats``, when given, receives ``path -> [size, mtime_ns, file id, sha256]`` taken from
+    the same open handle the bytes were read from, for later stat-based snapshot checks.
+    """
     if not isinstance(max_file_bytes, int) or max_file_bytes < 1 or not isinstance(max_files, int) or max_files < 1:
         raise TargetError('Inventory limits must be positive integers')
     root = Path(target['root'])
@@ -150,6 +154,8 @@ def build_inventory(target, *, max_file_bytes=8_000_000, max_files=100_000, with
             language, kind = classify(path, data)
             item = {'path': path, 'size': len(data), 'sha256': sha256_hex(data), 'language': language, 'kind': kind,
                     'lines': len(data.splitlines())}
+            if stats is not None:
+                stats[path] = [st.st_size, st.st_mtime_ns, st.st_ino, item['sha256']]
             if with_signals and kind not in {'binary', 'lock'}:
                 found = signals.detect(data)
                 if found: item['signals'] = found
