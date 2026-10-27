@@ -6,6 +6,7 @@ import re
 from collections import Counter
 from .copy import SEVERITIES, _reportable, human_label
 from ..orchestration.standard import SKIP_LABELS
+from ..timing import duration_text, elapsed_seconds
 
 
 def _text(value, fallback='Not recorded'):
@@ -81,6 +82,10 @@ def render_markdown(manifest: dict, findings_doc: dict, coverage: dict, chains_d
     totals = Counter(f['severity']['level'] for f in findings)
     parts.extend(['## Severity totals', '| Severity | Findings |\n|---|---:|\n' + '\n'.join(f'| {human_label(s)} | {totals[s]} |' for s in SEVERITIES),
                   '## Coverage', f"Review coverage: {human_label(coverage.get('completeness', 'unknown'))}."])
+    started, finished = manifest.get('startedAt'), manifest.get('finishedAt')
+    if started and finished:
+        parts.append(f'Scan time: {duration_text(elapsed_seconds(started, finished))} '
+                     f'({_text(started)} to {_text(finished)}).')
     files = coverage.get('files', {})
     parts.append(f"Files: {files.get('reviewed', 0)} reviewed of {files.get('total', 0)}; "
                  f"{files.get('deferred', 0)} deferred; {files.get('unsupported', 0)} unsupported.")

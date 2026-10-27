@@ -16,7 +16,7 @@ import sys
 import threading
 import uuid
 
-from . import target, validation, reports, chains, dependencies
+from . import target, validation, reports, chains, dependencies, timing
 from .canonical import canonical_json, sha256_hex, stable_id, utcnow
 from .domain.models import normalize_candidate, promote_to_finding
 from .domain.identities import finding_id
@@ -340,7 +340,7 @@ class SecurityService:
             raise ValidationError('section must be text')
         if section is None:
             return {**scan, 'scanId': scan_id, 'plan': self._plan(scan), 'progress': self.progress(scan_id),
-                    'stall': self.stall(scan)}
+                    'stall': self.stall(scan), 'timing': timing.scan_timing(scan, self._now())}
         if section == 'summary':
             # Small header an agent can always read, even when the full plan exceeds the tool result cap.
             plan = self._plan(scan, packets=[])
@@ -353,6 +353,7 @@ class SecurityService:
                     'schedule': standard.SCHEDULE, 'dependencyCheck': plan['dependencyCheck'],
                     'delegate': scan['options'].get('delegate'),
                     'possibleDuplicates': self._possible_duplicates(scan_id),
+                    'timing': timing.scan_timing(scan, self._now()),
                     'next': self.next_step(scan_id),
                     'sections': ['summary', 'next', 'queue', 'packets', 'dependencies', 'inventory', 'coverage', 'candidates',
                                  'findings', 'workers', 'validations', 'chains', 'activity', 'manifest', 'report']}
@@ -895,8 +896,10 @@ class SecurityService:
                     sev: n for sev, n in conn.execute(
                         'SELECT severity,count(DISTINCT finding_id) FROM findings WHERE scan_id=? GROUP BY severity',
                         (item['scan_id'],))}
+        now = self._now()
         for item in items:
             item['stall'] = self.stall(item)
+            item['timing'] = timing.scan_timing(item, now)
         return {'items': items, 'total': total}
 
     def workbench_findings(self, *, q=None, triage=None, severity=None, evidence_state=None,

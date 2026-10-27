@@ -280,6 +280,15 @@ test('state labels preserve uncertainty and NOT RUN', () => {
   assert.equal(plugin.label('NOT_RUN'), 'NOT RUN')
   assert.equal(plugin.label(null), 'Unknown')
 })
+test('scan time reads as a duration, finished or still running', () => {
+  assert.equal(plugin.duration(null), '')
+  assert.equal(plugin.duration(30), 'under a minute')
+  assert.equal(plugin.duration(3900), '1h 5m')
+  assert.equal(plugin.duration(2 * 86400 + 3 * 3600), '2d 3h')
+  assert.equal(plugin.scanTime({ timing: { durationSeconds: 15330, running: false } }), 'took 4h 15m')
+  assert.equal(plugin.scanTime({ timing: { durationSeconds: 2280, running: true } }), 'running 38m')
+  assert.equal(plugin.scanTime({}), '')
+})
 test('query keys partition profiles, filters and pagination', () => {
   assert.notDeepEqual(plugin.queryKey('a', '/findings'), plugin.queryKey('b', '/findings'))
   assert.deepEqual(
