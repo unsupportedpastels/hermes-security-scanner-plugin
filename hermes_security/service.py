@@ -431,7 +431,7 @@ class SecurityService:
             return {'check': dependencies.compact(receipt), 'items': leads[offset:offset + limit], 'total': len(leads),
                     'runtimes': receipt.get('runtimes', [])}
         if section == 'coverage':
-            return self.coverage(scan_id)
+            return self.coverage_view(scan_id)
         if section == 'activity':
             return self.activity(scan_id, after_id=offset, limit=limit)
         if section == 'chains':
@@ -573,7 +573,7 @@ class SecurityService:
                 self.store.add_event(scan_id, 'scan.blocked', note or 'The agent could not continue.')
             else:
                 self.store.add_event(scan_id, 'scan.checkpoint', note or 'Coverage checkpoint recorded.')
-            return {'scanId': scan_id, 'recorded': len(units), 'coverage': self.coverage(scan_id)}
+            return {'scanId': scan_id, 'recorded': len(units), 'coverage': self.coverage_view(scan_id)}
 
     def submit_worker_result(self, payload):
         problems = validate_worker_result(payload)
@@ -797,6 +797,23 @@ class SecurityService:
         if scan['sealed_at']:
             return json.loads(read_artifact(scan_dir(self.data_dir, scan_id), 'coverage.json'))
         return build_coverage(scan, self.store.inventory(scan_id), self.store.coverage_units(scan_id), self._attempts(scan_id), self._packets(scan), self._candidates(scan_id))
+
+    def coverage_view(self, scan_id):
+        """Coverage for the workbench and agent reads: files a focused standard scan skipped by design
+        are counted by reason, not listed one by one (tens of thousands of paths on a large
+        repository). coverage.json in the sealed report keeps the full list."""
+        result = self.coverage(scan_id)
+        files = result.get('files', {})
+        kept, by_design = [], {}
+        for item in files.get('excluded', []):
+            reason = str(item.get('reason', ''))
+            if reason.startswith('standard_'):
+                by_design[reason] = by_design.get(reason, 0) + 1
+            else:
+                kept.append(item)
+        if by_design:
+            result['files'] = {**files, 'excluded': kept, 'excludedByDesign': dict(sorted(by_design.items()))}
+        return result
 
     def finalize(self, scan_id):
         with self._mutation(scan_id) as scan:

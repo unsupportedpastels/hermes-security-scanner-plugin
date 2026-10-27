@@ -202,6 +202,26 @@ def test_bad_query_is_sanitized_400(api, path):
     assert response.json() == {'error': {'code': 'invalid_input', 'message': 'Invalid request.'}}
 
 
+def test_a_500_logs_its_cause_without_secrets(populated, monkeypatch, caplog):
+    module, client, root, sid, fid, secret = populated
+    def fail():
+        raise RuntimeError('summary broke near ' + secret)
+    monkeypatch.setattr(module.get_service(), 'summary', fail)
+    with caplog.at_level('ERROR', logger='hermes_security.dashboard'):
+        assert client.get(PREFIX + '/summary').status_code == 500
+    text = caplog.text
+    assert 'GET' in text and '/summary' in text and 'RuntimeError: summary broke near' in text
+    assert secret not in text
+
+
+def test_an_oversized_response_is_logged(populated, monkeypatch, caplog):
+    module, client, root, sid, fid, secret = populated
+    monkeypatch.setattr(module, 'MAX_JSON_BYTES', 10)
+    with caplog.at_level('ERROR', logger='hermes_security.dashboard'):
+        assert client.get(PREFIX + '/summary').status_code == 500
+    assert 'exceeds the 10 byte cap' in caplog.text
+
+
 def test_error_mapping_and_unexposed_internal_routes(populated, monkeypatch):
     module, client, root, sid, fid, secret = populated
     for path in ['/scans/missing', '/findings/missing', '/scans/missing/activity', '/scans/missing/coverage']:
