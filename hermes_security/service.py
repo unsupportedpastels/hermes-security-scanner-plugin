@@ -165,8 +165,11 @@ class SecurityService:
         elif scan['mode'] == 'diff':
             packets, _ = diff.build_packets(scan['scan_id'], scan['target'], profiles, manifest=scan['options']['diff'])
         else:
-            packets = standard.build_packets(scan['scan_id'], inventory, profiles)
-            packets += standard.remainder_packets(scan['scan_id'], packets, scan['options'].get('remainders', {}), inventory)
+            # Scans keep the planner they started with, so packet identities never shift mid-scan.
+            planner = scan['options'].get('planner', 1)
+            packets = standard.build_packets(scan['scan_id'], inventory, profiles, planner=planner)
+            packets += standard.remainder_packets(scan['scan_id'], packets, scan['options'].get('remainders', {}), inventory,
+                                                  max_rounds=standard.remainder_rounds(planner))
         receipt = scan['options'].get('dependencies')
         if receipt and receipt.get('leads'):
             for packet in packets:
@@ -194,7 +197,12 @@ class SecurityService:
                 'dependencyCheck': dependencies.compact(scan['options'].get('dependencies')),
                 'submit': {'tool': 'security_scan_submit_worker_result', 'cli': 'PYTHONPATH=' + shlex.quote(str(Path(__file__).resolve().parents[1])) + ' ' + shlex.quote(sys.executable) + ' -m hermes_security submit --scan ' + scan['scan_id'] + ' --file <json>'},
                 'inventory': {'files': len(inventory), 'bytes': sum(f['size'] for f in inventory), 'lines': sum(f['lines'] for f in inventory), 'truncated': scan['options']['truncated']},
-                'excluded': self._excluded_summary(excluded), 'status': scan['status'], 'diff': scan['options'].get('diff')}
+                'excluded': self._excluded_summary(excluded), 'status': scan['status'], 'diff': scan['options'].get('diff'),
+                **({'standardPlan': standard.summary(inventory)} if self._planner(scan) >= 2 else {})}
+
+    @staticmethod
+    def _planner(scan):
+        return scan['options'].get('planner', 1) if scan['mode'] == 'standard' else 0
 
     @staticmethod
     def _excluded_summary(excluded, limit=500):
@@ -250,6 +258,8 @@ class SecurityService:
             opts['authorizationSource'] = 'dashboard'
         options = {**opts, 'surfaces': sorted(ledger.detect_surfaces(inventory['files'])), 'deep_passes': passes,
                    'excluded': inventory['excluded'], 'truncated': inventory['truncated']}
+        if mode == 'standard':
+            options['planner'] = standard.PLANNER_VERSION
         if mode == 'diff':
             options['diff'] = target.diff_manifest(resolved)
         scan = self.store.create_scan(mode=mode, safety_level=safety, target=resolved, inventory=inventory['files'], options=options)

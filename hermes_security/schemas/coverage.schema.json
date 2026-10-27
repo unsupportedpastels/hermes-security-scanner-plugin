@@ -280,6 +280,36 @@
         "additionalProperties": false
       }
     },
+    "standardPlan": {
+      "type": "object",
+      "properties": {
+        "readLines": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "totalLines": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "skipped": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "note": {
+          "type": "string",
+          "maxLength": 20000
+        }
+      },
+      "required": [
+        "readLines",
+        "totalLines",
+        "skipped"
+      ],
+      "additionalProperties": false
+    },
     "gaps": {
       "type": "array",
       "items": {

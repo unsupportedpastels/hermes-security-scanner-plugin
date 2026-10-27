@@ -13,6 +13,7 @@ from ..canonical import sha256_hex
 from ..errors import TargetError
 from .resolve import git_bytes
 from .policy import classify, exclusion_reason, is_untrusted_instruction_file
+from . import signals
 from ..fsutil import is_link
 
 if os.name == 'nt':
@@ -119,7 +120,8 @@ def _directory_paths(root):
             yield (Path(parent) / name).relative_to(root).as_posix()
 
 
-def build_inventory(target, *, max_file_bytes=8_000_000, max_files=100_000):
+def build_inventory(target, *, max_file_bytes=8_000_000, max_files=100_000, with_signals=True):
+    """``with_signals=False`` skips content signals; snapshot checks only compare hashes."""
     if not isinstance(max_file_bytes, int) or max_file_bytes < 1 or not isinstance(max_files, int) or max_files < 1:
         raise TargetError('Inventory limits must be positive integers')
     root = Path(target['root'])
@@ -148,6 +150,9 @@ def build_inventory(target, *, max_file_bytes=8_000_000, max_files=100_000):
             language, kind = classify(path, data)
             item = {'path': path, 'size': len(data), 'sha256': sha256_hex(data), 'language': language, 'kind': kind,
                     'lines': len(data.splitlines())}
+            if with_signals and kind not in {'binary', 'lock'}:
+                found = signals.detect(data)
+                if found: item['signals'] = found
             notes = []
             if st.st_nlink > 1: notes.append(f'nlink={st.st_nlink}')
             if is_untrusted_instruction_file(path): notes.append('untrusted_instruction_file')

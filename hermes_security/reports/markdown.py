@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from collections import Counter
 from .copy import SEVERITIES, _reportable, human_label
+from ..orchestration.standard import SKIP_LABELS
 
 
 def _text(value, fallback='Not recorded'):
@@ -87,7 +88,14 @@ def render_markdown(manifest: dict, findings_doc: dict, coverage: dict, chains_d
     out_of_scope = sum(item.get('reason') == 'out_of_scope' for item in excluded)
     if out_of_scope:
         parts.append(f'Outside the requested scope: {out_of_scope} files (not reviewed).')
-    listed = [item for item in excluded if item.get('reason') != 'out_of_scope']
+    # A focused standard scan skips some files by design; count them instead of listing thousands.
+    by_design = Counter(item.get('reason') for item in excluded if str(item.get('reason', '')).startswith('standard_'))
+    if by_design:
+        kinds = '; '.join(f'{n} {SKIP_LABELS.get(reason, _text(reason))}' for reason, n in sorted(by_design.items()))
+        parts.append(f'Not read by this standard scan, by design: {kinds}. A deep scan reads them; '
+                     'coverage.json lists every file.')
+    listed = [item for item in excluded
+              if item.get('reason') != 'out_of_scope' and not str(item.get('reason', '')).startswith('standard_')]
     for item in listed[:200]:
         parts.append(f"Excluded: {_text(item.get('path'))} — {_text(item.get('reason'))}.")
     if len(listed) > 200:

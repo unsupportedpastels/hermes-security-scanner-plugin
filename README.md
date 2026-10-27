@@ -85,15 +85,27 @@ the Desktop **Security** page and fill in:
 5. **Only this folder** and **Extra context** (both optional).
 
 Press **Start scan**; a ready-to-send chat draft opens. The agent builds a threat
-model, reviews every in-scope file, checks each candidate against the code (and
+model, reviews the in-scope code (see Standard vs deep below), checks each candidate against the code (and
 with tests, if allowed), then traces whether an attacker can reach it. There is
 nothing to install: the review is model reasoning. Vendored code, links, special
 files and files over 8 MB are skipped and listed in the report.
 
 The work is split by folder into areas sized to finish in one review, plus one
-baseline reviewer over the whole scope and a second independent reviewer for
-high-risk areas. Up to 6 reviewers run at once; files a reviewer could not finish
-are handed to a fresh one.
+baseline reviewer that maps entry points and trust boundaries over the whole
+scope. Up to 6 reviewers run at once.
+
+**Standard vs deep.** A standard scan reads a small repository (under about 60k
+lines) in full. In a larger one it reviews production code (source, config, CI,
+IaC, migrations) and skips tests, fixtures, docs, examples, translations,
+generated files, assets and lockfiles, unless one of them holds a committed
+secret. Areas are ranked by what the code does (routes, request input, exec,
+SQL, deserialization, auth, webhooks); every app or top-level folder gets its
+riskiest area read first, then the riskiest of the rest, within a reading budget of 25%
+of production code (at least 300k lines, at most 800k). At most two of the
+riskiest areas get a second independent reviewer, and files a reviewer could not
+finish get one more pass. Everything a standard scan skips is listed in the
+report as excluded by design, with a reason. A deep scan reads every file,
+adds more second reviews and allows up to three follow-up passes.
 
 **Dependency check:** before the review starts, the scan checks your lockfiles
 against published advisories with Google's

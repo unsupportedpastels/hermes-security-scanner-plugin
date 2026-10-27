@@ -1,5 +1,6 @@
 """Coverage closure is independent of the number of findings."""
 from ..standards import ledger
+from . import standard
 
 # Intentional or harmless skips: out of scope, dependencies, links (their in-repo
 # targets are scanned directly), submodules, special files and oversized/generated
@@ -25,6 +26,15 @@ def build_coverage(scan, inventory, units, attempts, packets, findings):
     review_paths.update(diff.get('deleted', []))
     review_paths.update(diff.get('changed', []))
     review_paths.update(diff.get('added', []))
+    # A focused standard scan leaves some files out by design: they are listed exclusions,
+    # not unfinished work, unless a worker read one fully anyway.
+    planned = scan.get('mode') == 'standard' and scan['options'].get('planner', 1) >= 2
+    by_design = []
+    for path, reason in sorted(standard.plan(inventory)['skipped'].items()) if planned else ():
+        if by_id.get('file:' + path, {}).get('state') not in {'reviewed', 'not_applicable'}:
+            review_paths.discard(path)
+            by_id.pop('file:' + path, None)
+            by_design.append({'path': path, 'reason': reason})
     for path in sorted(review_paths):
         ident = 'file:' + path
         by_id.setdefault(ident, {'unitId': ident, 'kind': 'file', 'state': 'unknown', 'reason': 'file has no accepted review', 'evidence': []})
@@ -47,9 +57,12 @@ def build_coverage(scan, inventory, units, attempts, packets, findings):
         # Listed in the report either way; only files we failed to read are gaps.
         if excluded['reason'] not in BENIGN_EXCLUSIONS:
             gaps.append('Excluded ' + excluded['path'] + ': ' + excluded['reason'])
-    return {'documentType': 'hermes-security.coverage', 'schemaVersion': '1.0', 'scanId': scan['scan_id'],
-            'completeness': 'partial' if gaps else 'complete',
-            'files': {'total': len(files), 'reviewed': sum(f['state'] in done for f in files),
-                      'deferred': sum(f['state'] == 'deferred' for f in files), 'unsupported': sum(f['state'] == 'unsupported' for f in files),
-                      'excluded': scan['options'].get('excluded', [])},
-            'units': list(by_id.values()), 'standards': standards, 'workers': workers, 'gaps': list(dict.fromkeys(gaps))}
+    result = {'documentType': 'hermes-security.coverage', 'schemaVersion': '1.0', 'scanId': scan['scan_id'],
+              'completeness': 'partial' if gaps else 'complete',
+              'files': {'total': len(files), 'reviewed': sum(f['state'] in done for f in files),
+                        'deferred': sum(f['state'] == 'deferred' for f in files), 'unsupported': sum(f['state'] == 'unsupported' for f in files),
+                        'excluded': scan['options'].get('excluded', []) + by_design},
+              'units': list(by_id.values()), 'standards': standards, 'workers': workers, 'gaps': list(dict.fromkeys(gaps))}
+    if planned:
+        result['standardPlan'] = standard.summary(inventory)
+    return result

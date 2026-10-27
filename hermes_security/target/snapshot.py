@@ -19,7 +19,7 @@ def snapshot_digest(inventory, target):
 def is_snapshot_current(target, digest):
     try:
         current = resolve_target(target['root'], scope=target.get('scope'), base=target.get('base'), head=target.get('head'))
-        return snapshot_digest(build_inventory(current), current) == digest
+        return snapshot_digest(build_inventory(current, with_signals=False), current) == digest
     except (TargetError, OSError, ValueError): return False
 
 
@@ -33,7 +33,7 @@ def compare_inventory(target, stored_files):
     """
     try:
         current = resolve_target(target['root'], scope=target.get('scope'), base=target.get('base'), head=target.get('head'))
-        now = {f['path']: f['sha256'] for f in build_inventory(current)['files']}
+        now = {f['path']: f['sha256'] for f in build_inventory(current, with_signals=False)['files']}
     except (TargetError, OSError, ValueError):
         return None
     before = {f['path']: f['sha256'] for f in stored_files}
