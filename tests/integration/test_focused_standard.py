@@ -20,7 +20,7 @@ def start(tmp_path, monkeypatch):
 def test_new_standard_scans_use_the_focused_planner(tmp_path, monkeypatch):
     service, plan = start(tmp_path, monkeypatch)
     scan = service.get_scan(plan['scanId'])
-    assert scan['options']['planner'] == standard.PLANNER_VERSION == 2
+    assert scan['options']['planner'] == standard.PLANNER_VERSION == 3
     owned = {p for packet in plan['packets'] for p in packet['files']}
     assert owned == {'src/app.py', 'src/util.py'}
     assert plan['standardPlan']['skipped'] == {'standard_doc': 1, 'standard_test': 1}

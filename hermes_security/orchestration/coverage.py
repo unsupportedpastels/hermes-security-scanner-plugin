@@ -27,11 +27,13 @@ def build_coverage(scan, inventory, units, attempts, packets, findings):
     review_paths.update(diff.get('changed', []))
     review_paths.update(diff.get('added', []))
     # A focused standard scan leaves some files out by design: they are listed exclusions,
-    # not unfinished work, unless a worker read one fully anyway.
-    planned = scan.get('mode') == 'standard' and scan['options'].get('planner', 1) >= 2
+    # not unfinished work, unless a worker read one fully anyway. A worker's explicit
+    # "cannot analyze this" (unsupported, failed) stays visible as a gap.
+    planner = scan['options'].get('planner', 1) if scan.get('mode') == 'standard' else 0
+    planned, frozen = planner >= 2, scan['options'].get('standardAreas')
     by_design = []
-    for path, reason in sorted(standard.plan(inventory)['skipped'].items()) if planned else ():
-        if by_id.get('file:' + path, {}).get('state') not in {'reviewed', 'not_applicable'}:
+    for path, reason in sorted(standard.plan(inventory, planner, frozen)['skipped'].items()) if planned else ():
+        if by_id.get('file:' + path, {}).get('state') in {None, 'deferred', 'unknown'}:
             review_paths.discard(path)
             by_id.pop('file:' + path, None)
             by_design.append({'path': path, 'reason': reason})
@@ -59,10 +61,11 @@ def build_coverage(scan, inventory, units, attempts, packets, findings):
             gaps.append('Excluded ' + excluded['path'] + ': ' + excluded['reason'])
     result = {'documentType': 'hermes-security.coverage', 'schemaVersion': '1.0', 'scanId': scan['scan_id'],
               'completeness': 'partial' if gaps else 'complete',
-              'files': {'total': len(files), 'reviewed': sum(f['state'] in done for f in files),
+              'files': {'total': len(files), 'reviewed': sum(f['state'] == 'reviewed' for f in files),
+                        'notApplicable': sum(f['state'] == 'not_applicable' for f in files),
                         'deferred': sum(f['state'] == 'deferred' for f in files), 'unsupported': sum(f['state'] == 'unsupported' for f in files),
                         'excluded': scan['options'].get('excluded', []) + by_design},
               'units': list(by_id.values()), 'standards': standards, 'workers': workers, 'gaps': list(dict.fromkeys(gaps))}
     if planned:
-        result['standardPlan'] = standard.summary(inventory)
+        result['standardPlan'] = standard.summary(inventory, planner, frozen)
     return result

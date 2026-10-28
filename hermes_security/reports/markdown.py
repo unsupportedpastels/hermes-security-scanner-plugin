@@ -88,6 +88,7 @@ def render_markdown(manifest: dict, findings_doc: dict, coverage: dict, chains_d
                      f'({_text(started)} to {_text(finished)}).')
     files = coverage.get('files', {})
     parts.append(f"Files: {files.get('reviewed', 0)} reviewed of {files.get('total', 0)}; "
+                 f"{files.get('notApplicable', 0)} not applicable; "
                  f"{files.get('deferred', 0)} deferred; {files.get('unsupported', 0)} unsupported.")
     excluded = files.get('excluded', [])
     out_of_scope = sum(item.get('reason') == 'out_of_scope' for item in excluded)

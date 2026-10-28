@@ -3,6 +3,7 @@ import importlib.util
 import json
 from pathlib import Path
 import sys
+import time
 
 import pytest
 from fastapi import FastAPI
@@ -590,6 +591,16 @@ def test_clone_rejects_unsafe_addresses_with_a_readable_message(api, tmp_path):
     assert client.get(PREFIX + '/clones').json()['items'] == [{'path': str(service.data_dir / 'repos' / 'github.com' / 'o' / 'r'), 'name': 'o/r'}]
 
 
+def next_after_prepare(client, scan_id, timeout=10):
+    """The next step once the background inventory is done: a Workbench start answers first."""
+    deadline = time.monotonic() + timeout
+    while True:
+        step = client.get(PREFIX + '/scans/' + scan_id, params={'section': 'next'}).json()
+        if step['step'] != 'wait' or time.monotonic() > deadline:
+            return step
+        time.sleep(0.05)
+
+
 def test_scan_subagent_route_is_checked_and_reaches_the_agent(api, tmp_path, monkeypatch):
     module, client = api
     routes = {'installed': True, 'backend': 'model_map', 'available': True, 'default': 'fast',
@@ -601,7 +612,7 @@ def test_scan_subagent_route_is_checked_and_reaches_the_agent(api, tmp_path, mon
         assert client.post(PREFIX + '/scans', json={'path': str(root), 'delegate': bad}).status_code == 400, bad
     scan = client.post(PREFIX + '/scans', json={'path': str(root), 'delegate': {'backend': 'model_map', 'name': 'fast'}}).json()
     assert scan['options']['delegate'] == {'backend': 'model_map', 'name': 'fast'}
-    step = client.get(PREFIX + '/scans/' + scan['scanId'], params={'section': 'next'}).json()
+    step = next_after_prepare(client, scan['scanId'])
     assert step['step'] == 'dispatch' and step['delegate']['name'] == 'fast'
     assert 'Set "option": "fast" on every delegate_task task' in step['how']
     summary = client.get(PREFIX + '/scans/' + scan['scanId'], params={'section': 'summary'}).json()

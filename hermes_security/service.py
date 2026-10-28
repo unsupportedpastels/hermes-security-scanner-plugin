@@ -187,19 +187,39 @@ class SecurityService:
         else:
             # Scans keep the planner they started with, so packet identities never shift mid-scan.
             planner = scan['options'].get('planner', 1)
-            packets = standard.build_packets(scan['scan_id'], inventory, profiles, planner=planner)
+            packets = standard.build_packets(scan['scan_id'], inventory, profiles, planner=planner,
+                                             frozen=scan['options'].get('standardAreas'))
             packets += standard.remainder_packets(scan['scan_id'], packets, scan['options'].get('remainders', {}), inventory,
-                                                  max_rounds=standard.remainder_rounds(planner))
+                                                  max_rounds=standard.remainder_rounds(planner), progress_rule=planner >= 3)
         receipt = scan['options'].get('dependencies')
         if receipt and receipt.get('leads'):
+            owners = self._lead_owners(receipt, packets)
             for packet in packets:
                 # Whole-scope packets read the dependencies section; area packets get their own manifests' leads.
-                files = [f['path'] for f in inventory] if packet.get('filesFrom') == 'inventory' or packet['role'] == 'deep-pass' else packet.get('files', [])
+                files = ([f['path'] for f in inventory] if packet.get('filesFrom') == 'inventory' or packet['role'] == 'deep-pass'
+                         else packet.get('files', []) + owners.get(packet['packetId'], []))
                 leads, total = dependencies.leads_for(receipt, files, limit=0 if packet.get('filesFrom') == 'inventory' else 100)
                 if total:
                     packet['dependencyLeads'] = {'total': total, 'items': leads,
                                                  'more': 'security_scan_get section dependencies' if total > len(leads) else None}
         return packets
+
+    @staticmethod
+    def _lead_owners(receipt, packets):
+        """Lockfiles no packet reads (planner 3 skips them by design): each one's leads go to the
+        area packet with the most files in its folder, else in the folders below it."""
+        owned = {path for packet in packets for path in packet.get('files', [])}
+        areas = [p for p in packets if p.get('review') == 'area']
+        owners = {}
+        for lockfile in sorted({lead['path'] for lead in receipt.get('leads', []) if lead.get('path')} - owned):
+            folder = lockfile.rsplit('/', 1)[0] + '/' if '/' in lockfile else ''
+            def nearness(packet):
+                inside = [p for p in packet['files'] if p.startswith(folder)]
+                return (sum('/' not in p[len(folder):] for p in inside), len(inside))
+            best = max(areas, key=nearness, default=None)
+            if best is not None and nearness(best) != (0, 0):
+                owners.setdefault(best['packetId'], []).append(lockfile)
+        return owners
 
     def _plan(self, scan, packets=None):
         refs = Path(__file__).resolve().parents[1] / 'references'
@@ -218,7 +238,8 @@ class SecurityService:
                 'submit': {'tool': 'security_scan_submit_worker_result', 'cli': 'PYTHONPATH=' + shlex.quote(str(Path(__file__).resolve().parents[1])) + ' ' + shlex.quote(sys.executable) + ' -m hermes_security submit --scan ' + scan['scan_id'] + ' --file <json>'},
                 'inventory': {'files': len(inventory), 'bytes': sum(f['size'] for f in inventory), 'lines': sum(f['lines'] for f in inventory), 'truncated': scan['options']['truncated']},
                 'excluded': self._excluded_summary(excluded), 'status': scan['status'], 'diff': scan['options'].get('diff'),
-                **({'standardPlan': standard.summary(inventory)} if self._planner(scan) >= 2 else {})}
+                **({'standardPlan': standard.summary(inventory, self._planner(scan), scan['options'].get('standardAreas'))}
+                   if self._planner(scan) >= 2 else {})}
 
     @staticmethod
     def _planner(scan):
@@ -306,6 +327,8 @@ class SecurityService:
                    'excluded': inventory['excluded'], 'truncated': inventory['truncated']}
         if mode == 'standard':
             options['planner'] = standard.PLANNER_VERSION
+            # Saved with the scan, so a planner change never moves a running scan's packets.
+            options['standardAreas'] = standard.frozen_plan(inventory['files'])
         if mode == 'diff':
             options['diff'] = target.diff_manifest(resolved)
         return options

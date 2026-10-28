@@ -157,8 +157,8 @@ def build_inventory(target, *, max_file_bytes=8_000_000, max_files=100_000, with
             if stats is not None:
                 stats[path] = [st.st_size, st.st_mtime_ns, st.st_ino, item['sha256']]
             if with_signals and kind not in {'binary', 'lock'}:
-                found = signals.detect(data)
-                if found: item['signals'] = found
+                found, hits = signals.profile(data)
+                if found: item.update(signals=found, signalHits=hits)
             notes = []
             if st.st_nlink > 1: notes.append(f'nlink={st.st_nlink}')
             if is_untrusted_instruction_file(path): notes.append('untrusted_instruction_file')
