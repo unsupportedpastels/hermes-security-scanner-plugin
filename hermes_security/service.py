@@ -27,6 +27,7 @@ from .store.artifacts import scan_dir, write_artifact, read_artifact
 from .standards import ledger
 from .orchestration import METHODOLOGY_VERSION, standard, deep, diff, reducer, next_step, stall
 from .orchestration.coverage import build_coverage
+from .dependencies import finding as dependency_finding
 from .orchestration.worker_protocol import check_candidate
 from .fsutil import is_link, set_private
 
@@ -837,6 +838,10 @@ class SecurityService:
                 retained.append(row)
             coverage = self.coverage(scan_id)
             receipt = scan['options'].get('dependencies')
+            # Every advisory and end-of-life runtime as one finding, rated at the worst of them.
+            aggregate = dependency_finding.build(receipt, scan_id=scan_id, repo_key=scan['repo_key'])
+            if aggregate:
+                findings.append(aggregate)
             if receipt and receipt.get('status') == 'not_run':
                 # Requested but unavailable: known-vulnerable dependencies were not checked.
                 gaps.append(dependencies.describe(receipt))
