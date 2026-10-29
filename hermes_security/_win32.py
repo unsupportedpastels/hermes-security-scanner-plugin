@@ -431,6 +431,41 @@ def dacl_sddl(path):
         return _handle_sddl(h)
 
 
+# --- Processes -----------------------------------------------------------------
+
+PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+STILL_ACTIVE = 259
+ERROR_ACCESS_DENIED = 5
+OpenProcess = kernel32.OpenProcess
+OpenProcess.restype = w.HANDLE
+OpenProcess.argtypes = [w.DWORD, w.BOOL, w.DWORD]
+GetExitCodeProcess = kernel32.GetExitCodeProcess
+GetExitCodeProcess.restype = w.BOOL
+GetExitCodeProcess.argtypes = [w.HANDLE, ctypes.POINTER(w.DWORD)]
+GetProcessTimes = kernel32.GetProcessTimes
+GetProcessTimes.restype = w.BOOL
+GetProcessTimes.argtypes = [w.HANDLE] + [ctypes.POINTER(w.FILETIME)] * 4
+
+
+def process_start(pid):
+    """Creation time of a running process in 100 ns ticks; None when no such process runs,
+    0 when it runs but cannot be inspected."""
+    handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+    if not handle:
+        return 0 if ctypes.get_last_error() == ERROR_ACCESS_DENIED else None
+    try:
+        code = w.DWORD()
+        # A handle can outlive its process; an exit code means the process has ended.
+        if GetExitCodeProcess(handle, ctypes.byref(code)) and code.value != STILL_ACTIVE:
+            return None
+        times = [w.FILETIME() for _ in range(4)]
+        if not GetProcessTimes(handle, *(ctypes.byref(t) for t in times)):
+            return 0
+        return (times[0].dwHighDateTime << 32) | times[0].dwLowDateTime
+    finally:
+        CloseHandle(handle)
+
+
 # --- Job objects (session + rlimits) -----------------------------------------
 
 class JOBOBJECT_BASIC_LIMIT_INFORMATION(ctypes.Structure):

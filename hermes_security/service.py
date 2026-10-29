@@ -14,7 +14,6 @@ import os
 import shlex
 import sys
 import threading
-import uuid
 
 from . import target, validation, reports, chains, dependencies, timing
 from .canonical import canonical_json, sha256_hex, stable_id, utcnow
@@ -23,6 +22,7 @@ from .domain.identities import finding_id
 from .domain.validate import validate_worker_result, validate_document, public_problems
 from .errors import SecurityError, ValidationError, NotFound, Conflict, SealedError, PolicyDenied
 from .store.db import SecurityStore
+from .store import leases
 from .store.artifacts import scan_dir, write_artifact, read_artifact
 from .standards import ledger
 from .orchestration import METHODOLOGY_VERSION, standard, deep, diff, reducer, next_step, stall
@@ -30,6 +30,11 @@ from .orchestration.coverage import build_coverage
 from .dependencies import finding as dependency_finding
 from .orchestration.worker_protocol import check_candidate
 from .fsutil import is_link, set_private
+
+# A lease names its holder's process, so a holder that dies is replaced at once; the TTL only
+# bounds holders that cannot be checked, and outlasts several missed renewals.
+LEASE_TTL_S = 300
+LEASE_RENEW_S = 30
 
 
 class SecurityService:
@@ -79,19 +84,22 @@ class SecurityService:
             yield self._scan(scan_id, mutable=True, canceled=canceled)
             return
         self._scan(scan_id, mutable=True, canceled=canceled)
-        owner = (owner or 'service') + ':' + uuid.uuid4().hex
-        # Plans are bounded to <=200 operations at <=10 seconds each below.
-        if not self.store.lease(scan_id, owner, 3600):
-            raise Conflict('scan has an active operation; retry later')
+        owner = leases.owner(owner or 'service')
+        if not self.store.lease(scan_id, owner, LEASE_TTL_S):
+            raise Conflict(leases.describe(self.store.lease_owner(scan_id)))
         self._local.active = {**active, scan_id: owner}
         stop_renewal = threading.Event()
         def renew():
-            while not stop_renewal.wait(60):
+            # Renewal keeps long operations covered (validation plans run up to 200 steps).
+            while not stop_renewal.wait(LEASE_RENEW_S):
                 try:
-                    if not self.store.lease(scan_id, owner, 3600):
+                    if not self.store.lease(scan_id, owner, LEASE_TTL_S):
                         return
-                except SecurityError:
+                except (SealedError, NotFound):
                     return
+                except SecurityError:
+                    # A busy database is transient; the TTL outlasts several missed renewals.
+                    continue
         heartbeat = threading.Thread(target=renew, name='security-scan-lease', daemon=True)
         heartbeat.start()
         try:
