@@ -20,6 +20,19 @@ def _bullets(values, fallback='None recorded.'):
     return '\n'.join('- ' + _text(v) for v in values) if values else fallback
 
 
+def _runtimes(check):
+    """Runtime lines. The runtime lookup runs on its own, so they appear whatever the package check did."""
+    lines = []
+    for r in check.get('runtimes', []):
+        where = f"{_text(r.get('runtime'))} {_text(r.get('declared'))} in {_text(r.get('path'))}"
+        ended = f"support for {_text(r.get('cycle'))} ended {_text(r.get('eolDate'), 'on a date not recorded')}"
+        if r.get('status') == 'end_of_life':
+            lines.append(f'Runtime past end of life: {where} ({ended}).')
+        elif r.get('status') == 'allows_end_of_life':
+            lines.append(f'Runtime minimum is past end of life: {where} still permits it ({ended}).')
+    return lines
+
+
 def _dependency_section(check):
     """Known advisories are leads: they say a package version is affected, not that this code reaches it."""
     if not check:
@@ -30,10 +43,10 @@ def _dependency_section(check):
         return parts + [f"Not run: {_text(check.get('reason'), 'turned off')}. Known-vulnerable dependencies were not checked."]
     if status == 'no_sources':
         return parts + [f"Nothing to check: {_text(check.get('reason'))}. No package versions in scope were "
-                        'checked for published advisories.']
+                        'checked for published advisories.'] + _runtimes(check)
     if status != 'ok':
         return parts + [f"**Not run:** {_text(check.get('reason'), 'unknown error')}. Known-vulnerable dependencies "
-                        'were not checked, so this report says nothing about them.']
+                        'were not checked, so this report says nothing about them.'] + _runtimes(check)
     tool = check.get('tool') or {}
     parts.append(f"{check.get('vulnerablePackages', 0)} of {check.get('packages', 0)} packages in "
                  f"{len(check.get('sources', []))} manifest or lockfile(s) have published advisories "
@@ -52,14 +65,7 @@ def _dependency_section(check):
         parts.append('| Package | Version | Declared in | Worst severity | Advisories |\n|---|---|---|---|---|\n' + '\n'.join(rows))
         if more > 0:
             parts.append(f'{more} more vulnerable packages are listed in the scan data (section dependencies).')
-    for r in check.get('runtimes', []):
-        where = f"{_text(r.get('runtime'))} {_text(r.get('declared'))} in {_text(r.get('path'))}"
-        ended = f"support for {_text(r.get('cycle'))} ended {_text(r.get('eolDate'), 'on a date not recorded')}"
-        if r.get('status') == 'end_of_life':
-            parts.append(f'Runtime past end of life: {where} ({ended}).')
-        elif r.get('status') == 'allows_end_of_life':
-            parts.append(f'Runtime minimum is past end of life: {where} still permits it ({ended}).')
-    return parts
+    return parts + _runtimes(check)
 
 
 def render_markdown(manifest: dict, findings_doc: dict, coverage: dict, chains_doc: dict) -> str:

@@ -77,3 +77,48 @@ def test_finalize_adds_the_finding_to_the_index_and_the_report(tmp_path):
     assert len(items) == 1 and items[0]['title'].startswith('Dependencies with known vulnerabilities')
     report = service.get_scan(sid, 'report')['content']
     assert 'Dependencies with known vulnerabilities (worst: medium)' in report
+
+
+
+EOL = {'runtime': 'nodejs', 'declared': '18', 'path': '.nvmrc', 'cycle': '18', 'status': 'end_of_life',
+       'eolDate': '2025-04-30', 'latest': '24.1.0'}
+
+
+def valid(result):
+    doc = {'documentType': 'hermes-security.findings', 'schemaVersion': '1.0', 'scanId': SCAN, 'findings': [result]}
+    return validate_document('hermes-security.findings', doc) == [] and validate_finding_sections(result) == []
+
+
+def test_end_of_life_runtimes_count_when_no_package_was_checked():
+    # The runtime lookup runs on its own: no lockfile in scope, or OSV unavailable, still reports them.
+    for status in ('no_sources', 'not_run'):
+        result = build(receipt([], [EOL], status=status))
+        assert result['severity']['level'] == 'low' and '.nvmrc' in result['rootCause'] and valid(result)
+    # Package leads count only from a completed advisory check.
+    assert 'lodash' not in build(receipt([lead('lodash', 'critical')], [EOL], status='not_run'))['rootCause']
+    assert build(receipt([], [dict(EOL, status='supported')], status='no_sources')) is None
+
+
+def test_a_monorepo_of_dependency_results_stays_within_the_finding_schema():
+    runtimes = [dict(EOL, runtime='python', declared='3.8', cycle='3.8', path=f'apps/service{i}/Dockerfile')
+                for i in range(250)]
+    leads = [lead(f'pkg{i}', 'medium', path=f'apps/service{i}/package-lock.json') for i in range(100)]
+    leads.append(lead('x' * 30_000, 'high'))   # package names come from the repository
+    result = build(receipt(leads, runtimes))
+    assert valid(result) and len(result['rootCause']) <= finding.ROOT_CAUSE_CHARS
+    assert result['severity']['level'] == 'high'
+    assert '76 more packages and 225 more runtimes are listed' in result['rootCause']
+
+
+def test_finalize_reports_end_of_life_runtimes_when_no_lockfile_is_in_scope(tmp_path):
+    root = tmp_path / 'repo'; root.mkdir()
+    (root / '.nvmrc').write_text('18\n')
+    (root / 'app.js').write_text('module.exports = 1\n')
+    r = dict(receipt([], [EOL], status='no_sources'), reason='no manifest or lockfile in the scanned scope',
+             runtimeStatus='ok')
+    service = SecurityService(tmp_path / 'data', dependency_checker=lambda **kw: json.loads(json.dumps(r)))
+    sid = service.start_scan(path=str(root))['scanId']
+    assert service.finalize(sid)['manifest']['counts']['low'] == 1
+    report = service.get_scan(sid, 'report')['content']
+    assert 'Dependencies with known vulnerabilities (worst: low)' in report
+    assert 'Runtime past end of life: nodejs 18 in .nvmrc' in report

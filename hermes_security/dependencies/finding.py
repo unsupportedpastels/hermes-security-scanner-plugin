@@ -16,8 +16,10 @@ from ..domain.models import promote_to_finding
 
 RULE_ID = 'dependency.known-advisories'
 ANCHOR = 'dependency-check'          # one finding per repository, so triage carries across scans
-LISTED = 25                          # packages named in the finding; the report lists the rest
+LISTED = 25                          # packages, and runtimes, named in the finding; the report lists the rest
 MAX_LOCATIONS = 20
+ROOT_CAUSE_CHARS = 12_000            # the findings schema allows 20,000; an oversized field would block finalize
+LINE_CHARS = 400                     # per listed item: names and paths come from the repository
 _RANK = {'critical': 4, 'high': 3, 'medium': 2, 'low': 1}
 # Unrated advisories and runtimes past end of life count as low: real, but not graded by anyone.
 _UNRATED = 'low'
@@ -41,11 +43,35 @@ def _package_line(lead):
             + (f'; fixed in {", ".join(fixed)}' if fixed else '; no fixed version published'))
 
 
+def _runtime_line(runtime):
+    return (f"{runtime.get('runtime')} {runtime.get('declared')} ({runtime.get('path')}): release line "
+            f"{runtime.get('cycle')} reached end of life on {runtime.get('eolDate')}; latest is {runtime.get('latest')}")
+
+
+def _clip(line):
+    return line if len(line) <= LINE_CHARS else line[:LINE_CHARS - 3] + '...'
+
+
+def _fit(lines, budget):
+    """The leading *lines* that fit in *budget* characters as list items."""
+    kept = []
+    for line in lines:
+        budget -= len(line) + 3
+        if budget < 0:
+            break
+        kept.append(line)
+    return kept
+
+
 def build(receipt, *, scan_id, repo_key):
-    """The aggregate finding for a completed check, or ``None`` when it found nothing."""
-    if not receipt or receipt.get('status') != 'ok':
+    """The aggregate finding for a check, or ``None`` when it found nothing.
+
+    Packages count only from a completed advisory check. The runtime lookup runs on its own, so
+    end-of-life runtimes count even when no lockfile is in scope or the advisory check could not run.
+    """
+    if not receipt:
         return None
-    leads = list(receipt.get('leads', []))
+    leads = list(receipt.get('leads', [])) if receipt.get('status') == 'ok' else []
     runtimes = [r for r in receipt.get('runtimes', []) if r.get('status') == 'end_of_life']
     if not leads and not runtimes:
         return None
@@ -67,13 +93,19 @@ def build(receipt, *, scan_id, repo_key):
                'into an affected package function could exploit the published weakness; whether this code '
                'calls those functions was not checked.')
 
-    lines = [_package_line(l) for l in leads[:LISTED]]
-    if len(leads) > LISTED:
-        lines.append(f'{len(leads) - LISTED} more packages are listed in the Dependency check section of report.md.')
-    if receipt.get('truncated'):
+    # Bounded by characters as well as by count, so a monorepo's results never push the finding past
+    # the schema and block finalize; the report lists the rest.
+    budget = ROOT_CAUSE_CHARS - 1_000          # room for the heading and the closing notes
+    packages = _fit([_clip(_package_line(l)) for l in leads[:LISTED]], budget // 2 if runtimes else budget)
+    ended = _fit([_clip(_runtime_line(r)) for r in runtimes[:LISTED]], budget - sum(len(l) + 3 for l in packages))
+    lines = packages + ended
+    more = [_plural(n, 'more ' + word) for n, word in ((len(leads) - len(packages), 'package'),
+                                                        (len(runtimes) - len(ended), 'runtime')) if n]
+    if more:
+        verb = 'is' if len(leads) + len(runtimes) - len(lines) == 1 else 'are'
+        lines.append(f"{' and '.join(more)} {verb} listed in the Dependency check section of report.md.")
+    if receipt.get('truncated') and leads:
         lines.append('The advisory list was truncated by the check; not every affected package is named.')
-    lines += [f"{r.get('runtime')} {r.get('declared')} ({r.get('path')}): release line {r.get('cycle')} "
-              f"reached end of life on {r.get('eolDate')}; latest is {r.get('latest')}" for r in runtimes]
     root_cause = ('Lockfiles and runtime declarations pin versions with known security defects:\n- '
                   + '\n- '.join(lines))
 
