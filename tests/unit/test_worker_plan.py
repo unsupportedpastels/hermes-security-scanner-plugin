@@ -127,7 +127,7 @@ def test_a_new_standard_scan_saves_its_plan(tmp_path):
     service = SecurityService(tmp_path / 'data')
     plan = service.start_scan(path=str(root), dependency_check=False)
     options = service._scan(plan['scanId'])['options']
-    assert options['planner'] == 3
+    assert options['planner'] == 4
     assert options['standardAreas']['areas'] == [['src/app.py']]
     areas = [p for p in plan['packets'] if p['review'] == 'area']
     assert [p['files'] for p in areas] == [['src/app.py']]

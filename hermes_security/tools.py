@@ -38,6 +38,7 @@ TOOL_SCHEMAS = [
         "head": _field("string", "Advanced: diff head revision."),
         "safety_level": _field("string", "Advanced; prefer allow_tests.", enum=["static", "local-safe", "active-authorized"]),
         "dependency_check": _field("boolean", "Advanced: false skips the dependency check, only if the user does not want package names and versions sent to OSV.", default=True),
+        "planner": _field("integer", "Advanced, standard mode: 4, the default, adds cross-file questions from an import map of the code; 3 plans by folder only.", enum=[3, 4], default=4),
     }, ["path"]),
     _schema("get", "Read scan state or one paginated section before continuing a review. Read every page; incomplete coverage is not a clean result.", {
         "scan_id": _SCAN,
