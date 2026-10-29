@@ -25,7 +25,7 @@ from .store.db import SecurityStore
 from .store import leases
 from .store.artifacts import scan_dir, write_artifact, read_artifact
 from .standards import ledger
-from .orchestration import METHODOLOGY_VERSION, standard, deep, diff, reducer, next_step, stall
+from .orchestration import METHODOLOGY_VERSION, standard, deep, diff, reducer, next_step, stall, flows
 from .orchestration.coverage import build_coverage
 from .dependencies import finding as dependency_finding
 from .orchestration.worker_protocol import check_candidate
@@ -196,7 +196,8 @@ class SecurityService:
             # Scans keep the planner they started with, so packet identities never shift mid-scan.
             planner = scan['options'].get('planner', 1)
             packets = standard.build_packets(scan['scan_id'], inventory, profiles, planner=planner,
-                                             frozen=scan['options'].get('standardAreas'))
+                                             frozen=scan['options'].get('standardAreas'),
+                                             flow_map=scan['options'].get('flowMap'))
             packets += standard.remainder_packets(scan['scan_id'], packets, scan['options'].get('remainders', {}), inventory,
                                                   max_rounds=standard.remainder_rounds(planner), progress_rule=planner >= 3)
         receipt = scan['options'].get('dependencies')
@@ -266,7 +267,8 @@ class SecurityService:
                    background=False, **opts):
         self._safe(opts)
         allowed = {'path', 'mode', 'scope', 'base', 'head', 'safety_level', 'allowLocalValidation', 'allow_tests',
-                   'deep_passes', 'budget', 'notes', 'context', 'provider', 'model', 'dependency_check', 'delegate'}
+                   'deep_passes', 'budget', 'notes', 'context', 'provider', 'model', 'dependency_check', 'delegate',
+                   'planner'}
         if set(opts) - allowed:
             raise ValidationError('unknown scan option')
         if opts.get('delegate') is not None:
@@ -284,6 +286,11 @@ class SecurityService:
             raise ValidationError('allow_tests must be true or false')
         if 'dependency_check' in opts and type(opts['dependency_check']) is not bool:
             raise ValidationError('dependency_check must be true or false')
+        planner = opts.get('planner')
+        if 'planner' in opts and (type(planner) is not int or planner not in standard.PLANNERS or mode != 'standard'):
+            raise ValidationError('planner must be 3 or 4, for a standard scan')
+        if mode == 'standard':
+            planner = planner or standard.PLANNER_VERSION
         # One switch replaces the old safety levels: tests run only when allowed.
         safety = opts.get('safety_level', 'local-safe' if opts.get('allow_tests') or opts.get('allowLocalValidation') is True else 'static')
         if not isinstance(safety, str) or safety not in {'static', 'local-safe', 'active-authorized'}:
@@ -309,15 +316,17 @@ class SecurityService:
             # Save the scan now; the background thread inventories it, then checks dependencies,
             # and next_step holds review until both are saved.
             options = {**opts, 'deep_passes': passes, 'surfaces': [], 'excluded': [], 'truncated': False,
-                       'preparing': True, 'dependenciesPending': True}
+                       'preparing': True, 'dependenciesPending': True,
+                       # The inventory runs later, so the planner it builds for is chosen now.
+                       **({'planner': planner} if mode == 'standard' else {})}
             scan = self.store.create_scan(mode=mode, safety_level=safety, target=resolved, inventory=[], options=options)
             self.store.add_event(scan['scan_id'], 'scan.preparing', 'Inventorying the target.')
             self._start_dependency_check(scan['scan_id'])
             return self._plan(scan)
-        stats = {}
-        inventory = target.build_inventory(resolved, stats=stats)
+        stats, links = {}, ({} if planner == 4 else None)
+        inventory = target.build_inventory(resolved, stats=stats, links=links)
         resolved.update(snapshotDigest=target.snapshot_digest(inventory, resolved), fileCount=len(inventory['files']))
-        options = {**opts, 'deep_passes': passes, **self._inventory_options(mode, resolved, inventory)}
+        options = {**opts, 'deep_passes': passes, **self._inventory_options(mode, resolved, inventory, planner, links)}
         scan = self.store.create_scan(mode=mode, safety_level=safety, target=resolved, inventory=inventory['files'], options=options)
         self._save_stat_cache(scan['scan_id'], stats)
         # Dependencies are checked before review so their advisories reach the reviewers as leads.
@@ -330,13 +339,17 @@ class SecurityService:
         return self._plan(self._record_dependencies(scan, self._dependency_receipt(scan)))
 
     @staticmethod
-    def _inventory_options(mode, resolved, inventory):
+    def _inventory_options(mode, resolved, inventory, planner=None, links=None):
         options = {'surfaces': sorted(ledger.detect_surfaces(inventory['files'])),
                    'excluded': inventory['excluded'], 'truncated': inventory['truncated']}
         if mode == 'standard':
-            options['planner'] = standard.PLANNER_VERSION
+            options['planner'] = planner or standard.PLANNER_VERSION
             # Saved with the scan, so a planner change never moves a running scan's packets.
             options['standardAreas'] = standard.frozen_plan(inventory['files'])
+            if options['planner'] >= 4:
+                # Planner 4's connection map is saved too, since its questions are part of the plan.
+                production = [f for f in inventory['files'] if standard.role(f, 3) == 'source']
+                options['flowMap'] = flows.build_map(production, links or {}, options['standardAreas']['areas'])
         if mode == 'diff':
             options['diff'] = target.diff_manifest(resolved)
         return options
@@ -344,11 +357,12 @@ class SecurityService:
     def _prepare(self, scan):
         """Inventory a scan saved before its files were read; ``None`` when the target cannot be read."""
         resolved = dict(scan['target'])
+        planner = scan['options'].get('planner')
         try:
-            stats = {}
-            inventory = target.build_inventory(resolved, stats=stats)
+            stats, links = {}, ({} if planner == 4 else None)
+            inventory = target.build_inventory(resolved, stats=stats, links=links)
             resolved.update(snapshotDigest=target.snapshot_digest(inventory, resolved), fileCount=len(inventory['files']))
-            options = self._inventory_options(scan['mode'], resolved, inventory)
+            options = self._inventory_options(scan['mode'], resolved, inventory, planner, links)
         except (SecurityError, OSError, ValueError) as exc:
             reason = f'Could not inventory the target: {exc}'[:500]
             self.store.update_scan_options(scan['scan_id'], {'preparing': False, 'dependenciesPending': False})
