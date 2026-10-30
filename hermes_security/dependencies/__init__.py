@@ -184,8 +184,19 @@ def describe(receipt):
     return 'Dependency check did not run: ' + str((receipt or {}).get('reason') or 'unknown error') + '.'
 
 
+# Leads a packet embeds, in JSON characters: one packet must fit a security_scan_get page
+# (tools.MAX_RESULT_CHARS) with room to spare; the rest are paged from section dependencies.
+PACKET_LEAD_CHARS = 12_000
+
+
 def leads_for(receipt, files, limit=100):
-    """Leads whose manifest is one of *files*, for a reviewer's packet."""
+    """Leads whose manifest is one of *files*, for a reviewer's packet, and how many there are."""
     wanted = set(files)
     rows = [l for l in (receipt or {}).get('leads', []) if l['path'] in wanted]
-    return rows[:limit], len(rows)
+    kept, size = [], 0
+    for row in rows[:limit]:
+        size += len(json.dumps(row))
+        if size > PACKET_LEAD_CHARS:
+            break
+        kept.append(row)
+    return kept, len(rows)

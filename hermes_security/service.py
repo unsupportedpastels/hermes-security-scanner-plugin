@@ -14,7 +14,6 @@ import os
 import shlex
 import sys
 import threading
-import uuid
 
 from . import target, validation, reports, chains, dependencies, timing
 from .canonical import canonical_json, sha256_hex, stable_id, utcnow
@@ -23,12 +22,19 @@ from .domain.identities import finding_id
 from .domain.validate import validate_worker_result, validate_document, public_problems
 from .errors import SecurityError, ValidationError, NotFound, Conflict, SealedError, PolicyDenied
 from .store.db import SecurityStore
+from .store import leases
 from .store.artifacts import scan_dir, write_artifact, read_artifact
 from .standards import ledger
 from .orchestration import METHODOLOGY_VERSION, standard, deep, diff, reducer, next_step, stall
 from .orchestration.coverage import build_coverage
+from .dependencies import finding as dependency_finding
 from .orchestration.worker_protocol import check_candidate
 from .fsutil import is_link, set_private
+
+# A lease names its holder's process, so a holder that dies is replaced at once; the TTL only
+# bounds holders that cannot be checked, and outlasts several missed renewals.
+LEASE_TTL_S = 300
+LEASE_RENEW_S = 30
 
 
 class SecurityService:
@@ -78,19 +84,22 @@ class SecurityService:
             yield self._scan(scan_id, mutable=True, canceled=canceled)
             return
         self._scan(scan_id, mutable=True, canceled=canceled)
-        owner = (owner or 'service') + ':' + uuid.uuid4().hex
-        # Plans are bounded to <=200 operations at <=10 seconds each below.
-        if not self.store.lease(scan_id, owner, 3600):
-            raise Conflict('scan has an active operation; retry later')
+        owner = leases.owner(owner or 'service')
+        if not self.store.lease(scan_id, owner, LEASE_TTL_S):
+            raise Conflict(leases.describe(self.store.lease_owner(scan_id)))
         self._local.active = {**active, scan_id: owner}
         stop_renewal = threading.Event()
         def renew():
-            while not stop_renewal.wait(60):
+            # Renewal keeps long operations covered (validation plans run up to 200 steps).
+            while not stop_renewal.wait(LEASE_RENEW_S):
                 try:
-                    if not self.store.lease(scan_id, owner, 3600):
+                    if not self.store.lease(scan_id, owner, LEASE_TTL_S):
                         return
-                except SecurityError:
+                except (SealedError, NotFound):
                     return
+                except SecurityError:
+                    # A busy database is transient; the TTL outlasts several missed renewals.
+                    continue
         heartbeat = threading.Thread(target=renew, name='security-scan-lease', daemon=True)
         heartbeat.start()
         try:
@@ -186,19 +195,39 @@ class SecurityService:
         else:
             # Scans keep the planner they started with, so packet identities never shift mid-scan.
             planner = scan['options'].get('planner', 1)
-            packets = standard.build_packets(scan['scan_id'], inventory, profiles, planner=planner)
+            packets = standard.build_packets(scan['scan_id'], inventory, profiles, planner=planner,
+                                             frozen=scan['options'].get('standardAreas'))
             packets += standard.remainder_packets(scan['scan_id'], packets, scan['options'].get('remainders', {}), inventory,
-                                                  max_rounds=standard.remainder_rounds(planner))
+                                                  max_rounds=standard.remainder_rounds(planner), progress_rule=planner >= 3)
         receipt = scan['options'].get('dependencies')
         if receipt and receipt.get('leads'):
+            owners = self._lead_owners(receipt, packets)
             for packet in packets:
                 # Whole-scope packets read the dependencies section; area packets get their own manifests' leads.
-                files = [f['path'] for f in inventory] if packet.get('filesFrom') == 'inventory' or packet['role'] == 'deep-pass' else packet.get('files', [])
+                files = ([f['path'] for f in inventory] if packet.get('filesFrom') == 'inventory' or packet['role'] == 'deep-pass'
+                         else packet.get('files', []) + owners.get(packet['packetId'], []))
                 leads, total = dependencies.leads_for(receipt, files, limit=0 if packet.get('filesFrom') == 'inventory' else 100)
                 if total:
                     packet['dependencyLeads'] = {'total': total, 'items': leads,
                                                  'more': 'security_scan_get section dependencies' if total > len(leads) else None}
         return packets
+
+    @staticmethod
+    def _lead_owners(receipt, packets):
+        """Lockfiles no packet reads (planner 3 skips them by design): each one's leads go to the
+        area packet with the most files in its folder, else in the folders below it."""
+        owned = {path for packet in packets for path in packet.get('files', [])}
+        areas = [p for p in packets if p.get('review') == 'area']
+        owners = {}
+        for lockfile in sorted({lead['path'] for lead in receipt.get('leads', []) if lead.get('path')} - owned):
+            folder = lockfile.rsplit('/', 1)[0] + '/' if '/' in lockfile else ''
+            def nearness(packet):
+                inside = [p for p in packet['files'] if p.startswith(folder)]
+                return (sum('/' not in p[len(folder):] for p in inside), len(inside))
+            best = max(areas, key=nearness, default=None)
+            if best is not None and nearness(best) != (0, 0):
+                owners.setdefault(best['packetId'], []).append(lockfile)
+        return owners
 
     def _plan(self, scan, packets=None):
         refs = Path(__file__).resolve().parents[1] / 'references'
@@ -217,7 +246,8 @@ class SecurityService:
                 'submit': {'tool': 'security_scan_submit_worker_result', 'cli': 'PYTHONPATH=' + shlex.quote(str(Path(__file__).resolve().parents[1])) + ' ' + shlex.quote(sys.executable) + ' -m hermes_security submit --scan ' + scan['scan_id'] + ' --file <json>'},
                 'inventory': {'files': len(inventory), 'bytes': sum(f['size'] for f in inventory), 'lines': sum(f['lines'] for f in inventory), 'truncated': scan['options']['truncated']},
                 'excluded': self._excluded_summary(excluded), 'status': scan['status'], 'diff': scan['options'].get('diff'),
-                **({'standardPlan': standard.summary(inventory)} if self._planner(scan) >= 2 else {})}
+                **({'standardPlan': standard.summary(inventory, self._planner(scan), scan['options'].get('standardAreas'))}
+                   if self._planner(scan) >= 2 else {})}
 
     @staticmethod
     def _planner(scan):
@@ -305,6 +335,8 @@ class SecurityService:
                    'excluded': inventory['excluded'], 'truncated': inventory['truncated']}
         if mode == 'standard':
             options['planner'] = standard.PLANNER_VERSION
+            # Saved with the scan, so a planner change never moves a running scan's packets.
+            options['standardAreas'] = standard.frozen_plan(inventory['files'])
         if mode == 'diff':
             options['diff'] = target.diff_manifest(resolved)
         return options
@@ -431,7 +463,7 @@ class SecurityService:
             return {'check': dependencies.compact(receipt), 'items': leads[offset:offset + limit], 'total': len(leads),
                     'runtimes': receipt.get('runtimes', [])}
         if section == 'coverage':
-            return self.coverage(scan_id)
+            return self.coverage_view(scan_id)
         if section == 'activity':
             return self.activity(scan_id, after_id=offset, limit=limit)
         if section == 'chains':
@@ -573,7 +605,7 @@ class SecurityService:
                 self.store.add_event(scan_id, 'scan.blocked', note or 'The agent could not continue.')
             else:
                 self.store.add_event(scan_id, 'scan.checkpoint', note or 'Coverage checkpoint recorded.')
-            return {'scanId': scan_id, 'recorded': len(units), 'coverage': self.coverage(scan_id)}
+            return {'scanId': scan_id, 'recorded': len(units), 'coverage': self.coverage_view(scan_id)}
 
     def submit_worker_result(self, payload):
         problems = validate_worker_result(payload)
@@ -798,6 +830,23 @@ class SecurityService:
             return json.loads(read_artifact(scan_dir(self.data_dir, scan_id), 'coverage.json'))
         return build_coverage(scan, self.store.inventory(scan_id), self.store.coverage_units(scan_id), self._attempts(scan_id), self._packets(scan), self._candidates(scan_id))
 
+    def coverage_view(self, scan_id):
+        """Coverage for the workbench and agent reads: files a focused standard scan skipped by design
+        are counted by reason, not listed one by one (tens of thousands of paths on a large
+        repository). coverage.json in the sealed report keeps the full list."""
+        result = self.coverage(scan_id)
+        files = result.get('files', {})
+        kept, by_design = [], {}
+        for item in files.get('excluded', []):
+            reason = str(item.get('reason', ''))
+            if reason.startswith('standard_'):
+                by_design[reason] = by_design.get(reason, 0) + 1
+            else:
+                kept.append(item)
+        if by_design:
+            result['files'] = {**files, 'excluded': kept, 'excludedByDesign': dict(sorted(by_design.items()))}
+        return result
+
     def finalize(self, scan_id):
         with self._mutation(scan_id) as scan:
             reduced = self._reduced(scan_id)
@@ -820,6 +869,10 @@ class SecurityService:
                 retained.append(row)
             coverage = self.coverage(scan_id)
             receipt = scan['options'].get('dependencies')
+            # Every advisory and end-of-life runtime as one finding, rated at the worst of them.
+            aggregate = dependency_finding.build(receipt, scan_id=scan_id, repo_key=scan['repo_key'])
+            if aggregate:
+                findings.append(aggregate)
             if receipt and receipt.get('status') == 'not_run':
                 # Requested but unavailable: known-vulnerable dependencies were not checked.
                 gaps.append(dependencies.describe(receipt))

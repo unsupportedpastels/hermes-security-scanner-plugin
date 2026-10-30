@@ -90,22 +90,24 @@ with tests, if allowed), then traces whether an attacker can reach it. There is
 nothing to install: the review is model reasoning. Vendored code, links, special
 files and files over 8 MB are skipped and listed in the report.
 
-The work is split by folder into areas sized to finish in one review, plus one
-baseline reviewer that maps entry points and trust boundaries over the whole
-scope. Up to 6 reviewers run at once.
+The work is split by folder into packets of about 4k lines, roughly what one
+reviewer reads in a single context, plus one baseline reviewer that maps entry
+points and trust boundaries over the whole scope. Up to 10 reviewers run at once.
 
-**Standard vs deep.** A standard scan reads a small repository (under about 60k
-lines) in full. In a larger one it reviews production code (source, config, CI,
-IaC, migrations) and skips tests, fixtures, docs, examples, translations,
+**Standard vs deep.** A standard scan reviews production code (source, config,
+CI, IaC, migrations) and skips tests, fixtures, docs, examples, translations,
 generated files, assets and lockfiles, unless one of them holds a committed
-secret. Areas are ranked by what the code does (routes, request input, exec,
-SQL, deserialization, auth, webhooks); every app or top-level folder gets its
-riskiest area read first, then the riskiest of the rest, within a reading budget of 25%
-of production code (at least 300k lines, at most 800k). At most two of the
-riskiest areas get a second independent reviewer, and files a reviewer could not
-finish get one more pass. Everything a standard scan skips is listed in the
-report as excluded by design, with a reason. A deep scan reads every file,
-adds more second reviews and allows up to three follow-up passes.
+secret. Production code that fits in 90 packets (about 360k lines) is read in
+full. In a larger repository, files are ranked by what the code does (routes,
+request input, exec, SQL, deserialization, auth, webhooks) and how often, and
+the riskiest are read first within that budget; developer tooling such as
+scripts and evals ranks lower. At most two of the riskiest packets get a second
+independent reviewer. Files a reviewer could not finish go to fresh reviewers,
+round after round while each round makes progress (up to six rounds). The plan is
+saved when the scan starts, so a plugin update never reshuffles a running scan.
+Everything a standard scan skips is listed in the report as excluded by design,
+with a reason. A deep scan runs independent whole-repository passes (three by
+default) without the standard skips.
 
 **Dependency check:** before the review starts, the scan checks your lockfiles
 against published advisories with Google's

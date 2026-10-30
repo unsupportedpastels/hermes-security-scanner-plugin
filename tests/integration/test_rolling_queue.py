@@ -24,11 +24,11 @@ def submit(service, plan, packet, attempt, coverage, role='investigator'):
 def test_queue_lists_packets_with_schedule(tmp_path):
     _, service, plan = start(tmp_path)
     queue = service.get_scan(plan['scanId'], 'queue')
-    assert queue['schedule']['maxParallelWorkers'] == 6
+    assert queue['schedule']['maxParallelWorkers'] == 10
     assert queue['pending'] == queue['total'] == len(plan['packets'])
     assert queue['items'][0]['role'] == 'baseline'
     summary = service.get_scan(plan['scanId'], 'summary')
-    assert 'queue' in summary['sections'] and summary['schedule']['maxParallelWorkers'] == 6
+    assert 'queue' in summary['sections'] and summary['schedule']['maxParallelWorkers'] == 10
 
 
 def test_unfinished_area_files_become_a_remainder_packet(tmp_path):

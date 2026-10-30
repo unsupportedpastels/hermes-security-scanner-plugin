@@ -20,7 +20,7 @@ def start(tmp_path, monkeypatch):
 def test_new_standard_scans_use_the_focused_planner(tmp_path, monkeypatch):
     service, plan = start(tmp_path, monkeypatch)
     scan = service.get_scan(plan['scanId'])
-    assert scan['options']['planner'] == standard.PLANNER_VERSION == 2
+    assert scan['options']['planner'] == standard.PLANNER_VERSION == 3
     owned = {p for packet in plan['packets'] for p in packet['files']}
     assert owned == {'src/app.py', 'src/util.py'}
     assert plan['standardPlan']['skipped'] == {'standard_doc': 1, 'standard_test': 1}
@@ -39,6 +39,17 @@ def test_by_design_skips_are_listed_exclusions_not_gaps(tmp_path, monkeypatch):
     assert not any('tests/test_app.py' in gap or 'docs/guide.md' in gap for gap in coverage['gaps'])
     assert coverage['files']['total'] == 2
     assert coverage['standardPlan']['skipped'] == {'standard_doc': 1, 'standard_test': 1}
+
+
+def test_coverage_reads_count_by_design_skips_instead_of_listing_them(tmp_path, monkeypatch):
+    service, plan = start(tmp_path, monkeypatch)
+    sid = plan['scanId']
+    view = service.coverage_view(sid)
+    assert view['files']['excludedByDesign'] == {'standard_doc': 1, 'standard_test': 1}
+    assert not any(e['reason'].startswith('standard_') for e in view['files']['excluded'])
+    assert service.get_scan(sid, 'coverage') == view
+    # The full document, which the sealed report uses, still lists every file.
+    assert {e['path'] for e in service.coverage(sid)['files']['excluded']} >= {'tests/test_app.py', 'docs/guide.md'}
 
 
 def test_a_skipped_file_a_worker_reviewed_counts_as_reviewed(tmp_path, monkeypatch):

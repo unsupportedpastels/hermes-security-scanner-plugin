@@ -3,6 +3,7 @@ import importlib.util
 import json
 from pathlib import Path
 import sys
+import time
 
 import pytest
 from fastapi import FastAPI
@@ -200,6 +201,26 @@ def test_bad_query_is_sanitized_400(api, path):
     response = client.get(PREFIX + path)
     assert response.status_code == 400
     assert response.json() == {'error': {'code': 'invalid_input', 'message': 'Invalid request.'}}
+
+
+def test_a_500_logs_its_cause_without_secrets(populated, monkeypatch, caplog):
+    module, client, root, sid, fid, secret = populated
+    def fail():
+        raise RuntimeError('summary broke near ' + secret)
+    monkeypatch.setattr(module.get_service(), 'summary', fail)
+    with caplog.at_level('ERROR', logger='hermes_security.dashboard'):
+        assert client.get(PREFIX + '/summary').status_code == 500
+    text = caplog.text
+    assert 'GET' in text and '/summary' in text and 'RuntimeError: summary broke near' in text
+    assert secret not in text
+
+
+def test_an_oversized_response_is_logged(populated, monkeypatch, caplog):
+    module, client, root, sid, fid, secret = populated
+    monkeypatch.setattr(module, 'MAX_JSON_BYTES', 10)
+    with caplog.at_level('ERROR', logger='hermes_security.dashboard'):
+        assert client.get(PREFIX + '/summary').status_code == 500
+    assert 'exceeds the 10 byte cap' in caplog.text
 
 
 def test_error_mapping_and_unexposed_internal_routes(populated, monkeypatch):
@@ -570,6 +591,16 @@ def test_clone_rejects_unsafe_addresses_with_a_readable_message(api, tmp_path):
     assert client.get(PREFIX + '/clones').json()['items'] == [{'path': str(service.data_dir / 'repos' / 'github.com' / 'o' / 'r'), 'name': 'o/r'}]
 
 
+def next_after_prepare(client, scan_id, timeout=10):
+    """The next step once the background inventory is done: a Workbench start answers first."""
+    deadline = time.monotonic() + timeout
+    while True:
+        step = client.get(PREFIX + '/scans/' + scan_id, params={'section': 'next'}).json()
+        if step['step'] != 'wait' or time.monotonic() > deadline:
+            return step
+        time.sleep(0.05)
+
+
 def test_scan_subagent_route_is_checked_and_reaches_the_agent(api, tmp_path, monkeypatch):
     module, client = api
     routes = {'installed': True, 'backend': 'model_map', 'available': True, 'default': 'fast',
@@ -581,7 +612,7 @@ def test_scan_subagent_route_is_checked_and_reaches_the_agent(api, tmp_path, mon
         assert client.post(PREFIX + '/scans', json={'path': str(root), 'delegate': bad}).status_code == 400, bad
     scan = client.post(PREFIX + '/scans', json={'path': str(root), 'delegate': {'backend': 'model_map', 'name': 'fast'}}).json()
     assert scan['options']['delegate'] == {'backend': 'model_map', 'name': 'fast'}
-    step = client.get(PREFIX + '/scans/' + scan['scanId'], params={'section': 'next'}).json()
+    step = next_after_prepare(client, scan['scanId'])
     assert step['step'] == 'dispatch' and step['delegate']['name'] == 'fast'
     assert 'Set "option": "fast" on every delegate_task task' in step['how']
     summary = client.get(PREFIX + '/scans/' + scan['scanId'], params={'section': 'summary'}).json()

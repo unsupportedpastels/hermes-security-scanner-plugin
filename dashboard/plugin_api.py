@@ -12,6 +12,8 @@ from pathlib import Path
 import string
 import sys
 import threading
+import logging
+import traceback
 
 from fastapi import APIRouter, Body, Query
 from fastapi.exceptions import RequestValidationError
@@ -35,9 +37,11 @@ SecurityService = importlib.import_module('.service', _PACKAGE_NAME).SecuritySer
 resolve_data_dir = importlib.import_module('.config', _PACKAGE_NAME).resolve_data_dir
 SecurityError = importlib.import_module('.errors', _PACKAGE_NAME).SecurityError
 ValidationError = importlib.import_module('.errors', _PACKAGE_NAME).ValidationError
+redact_secrets = importlib.import_module('.target', _PACKAGE_NAME).redact_secrets
 
 _services = {}
 _services_lock = threading.Lock()
+_log = logging.getLogger('hermes_security.dashboard')
 MAX_JSON_BYTES = 2 * 1024 * 1024
 _ERRORS = {
     'invalid_input': (400, 'Invalid request.'),
@@ -57,6 +61,12 @@ def get_service():
             profile = home.name if home.parent.name == 'profiles' else 'default'
             _services[directory] = SecurityService(directory, profile=profile)
         return _services[directory]
+
+
+def _redacted_traceback():
+    """The current exception's traceback with secrets masked: messages can quote target text."""
+    result = redact_secrets(traceback.format_exc())
+    return result[0] if isinstance(result, tuple) else result
 
 
 def _error(code):
@@ -80,6 +90,8 @@ class SecurityRoute(APIRoute):
                     request._body = bytes(body)
                 response = await handler(request)
                 if response.media_type == 'application/json' and len(response.body) > MAX_JSON_BYTES:
+                    _log.error('%s %s: response of %d bytes exceeds the %d byte cap', request.method,
+                               request.url.path, len(response.body), MAX_JSON_BYTES)
                     return _error('internal_error')
                 return response
             except RequestValidationError:
@@ -87,6 +99,8 @@ class SecurityRoute(APIRoute):
             except SecurityError as exc:
                 return _error(exc.code)
             except Exception:
+                # The client only sees a generic message; the gateway log keeps the cause.
+                _log.error('%s %s failed:\n%s', request.method, request.url.path, _redacted_traceback())
                 return _error('internal_error')
         return safe_handler
 
@@ -354,7 +368,7 @@ def activity(scan_id: str, after_id: int = Query(0, ge=0), limit: int = Query(20
 
 @router.get('/scans/{scan_id}/coverage')
 def coverage(scan_id: str):
-    return get_service().coverage(scan_id)
+    return get_service().coverage_view(scan_id)
 
 
 @router.get('/findings')

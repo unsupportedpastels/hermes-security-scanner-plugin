@@ -61,8 +61,8 @@ def test_the_riskiest_area_always_gets_a_second_reviewer():
     assert all(p['area'].startswith('lib/') for p in packets if p['review'] == 'area')
 
 
-def test_schedule_is_six_at_once_under_the_host_cap():
-    assert standard.SCHEDULE['maxParallelWorkers'] == 6 <= standard.SCHEDULE['hostWorkerLimit']
+def test_schedule_runs_up_to_the_host_cap():
+    assert standard.SCHEDULE['maxParallelWorkers'] == 10 <= standard.SCHEDULE['hostWorkerLimit']
     assert 'one delegate_task call per packet' in standard.SCHEDULE['dispatch']
 
 

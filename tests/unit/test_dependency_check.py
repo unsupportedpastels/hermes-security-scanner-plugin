@@ -250,3 +250,13 @@ def test_a_turned_off_check_stays_synchronous(tmp_path):
     service = SecurityService(tmp_path / 'data')
     plan = service.start_scan(path=repo(tmp_path), background_dependencies=True)
     assert plan['status'] == 'awaiting_analysis' and not service._dependency_threads
+
+def test_packet_leads_fit_in_one_tool_page():
+    # A monorepo lockfile can carry hundreds of advisories; a packet that embeds them all is too
+    # big for security_scan_get, which pushed workers onto the CLI. The rest stay in section dependencies.
+    from hermes_security.tools import MAX_RESULT_CHARS
+    lead = {'path': 'package-lock.json', 'ecosystem': 'npm', 'summary': 'x' * 1000}
+    receipt = {'leads': [dict(lead, name=f'pkg{i}') for i in range(100)]}
+    leads, total = dependencies.leads_for(receipt, ['package-lock.json'])
+    assert total == 100 and 0 < len(leads) < 100
+    assert len(json.dumps(leads)) < MAX_RESULT_CHARS // 4

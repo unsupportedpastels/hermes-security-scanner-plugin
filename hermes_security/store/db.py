@@ -991,6 +991,12 @@ class SecurityStore:
             self._scan(c, scan_id, True)
             leases.release(c, scan_id, owner)
 
+    def lease_owner(self, scan_id):
+        """Who holds *scan_id*'s lease now, for error messages; None when nobody does."""
+        with self._connection() as c:
+            row = c.execute("SELECT owner FROM leases WHERE scan_id=?", (scan_id,)).fetchone()
+            return row[0] if row else None
+
     OPEN_STATUSES = ("created", "running", "awaiting_analysis", "finalizing")
 
     def delete_scan(self, scan_id):
@@ -1003,8 +1009,9 @@ class SecurityStore:
             scan = self._scan(c, scan_id)
             if not scan["sealed_at"] and scan["status"] in self.OPEN_STATUSES:
                 raise Conflict("stop the scan before deleting it")
-            if c.execute("SELECT 1 FROM leases WHERE scan_id=? AND expires_at>?", (scan_id, time.time())).fetchone():
-                raise Conflict("scan has an active operation; retry later")
+            holder = leases.active(c, scan_id)
+            if holder:
+                raise Conflict(leases.describe(holder))
             finding_ids = [r[0] for r in c.execute("SELECT DISTINCT finding_id FROM findings WHERE scan_id=?", (scan_id,))]
             tables = [r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type='table'")
                       if any(col[1] == "scan_id" for col in c.execute("PRAGMA table_info(" + r[0] + ")"))]
