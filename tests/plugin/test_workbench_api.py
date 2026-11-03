@@ -655,3 +655,39 @@ def test_scan_subagent_route_is_checked_and_reaches_the_agent(api, tmp_path, mon
     assert client.post(PREFIX + '/scans', json={'path': str(root), 'delegate': {'backend': 'model_map', 'name': 'fast'}}).status_code == 400
     plain = client.post(PREFIX + '/scans', json={'path': str(root)}).json()
     assert 'delegate' not in client.get(PREFIX + '/scans/' + plain['scanId'], params={'section': 'next'}).json()
+
+
+def _fake_host(monkeypatch, config, registered=()):
+    import types
+    backends = types.ModuleType('agent.delegation_backends')
+    backends.list_backends = lambda: [types.SimpleNamespace(name=n, available=a) for n, a in registered]
+    cfg = types.ModuleType('hermes_cli.config')
+    cfg.load_config_readonly = lambda: config
+    monkeypatch.setitem(sys.modules, 'agent', types.ModuleType('agent'))
+    monkeypatch.setitem(sys.modules, 'agent.delegation_backends', backends)
+    monkeypatch.setitem(sys.modules, 'hermes_cli', types.ModuleType('hermes_cli'))
+    monkeypatch.setitem(sys.modules, 'hermes_cli.config', cfg)
+
+
+def test_delegation_routes_come_from_config_when_the_dashboard_loaded_no_plugins(api, monkeypatch):
+    module, _ = api
+    config = {'plugins': {'enabled': ['advanced-delegation']},
+              'delegation': {'backend': 'model_map', 'backends': {'model_map': {
+                  'default': 'fast', 'options': [{'name': 'fast', 'provider': 'p', 'model': 'm', 'api_key': 'sk-secret'}]}}}}
+    _fake_host(monkeypatch, config)
+    info = module._delegation_info()
+    assert info == {'installed': True, 'backend': 'model_map', 'available': True, 'default': 'fast',
+                    'choices': [{'name': 'fast', 'description': '', 'detail': 'p/m'}]}
+    assert 'sk-secret' not in json.dumps(info)
+
+
+def test_delegation_registry_wins_and_disabled_plugin_offers_nothing(api, monkeypatch):
+    module, _ = api
+    config = {'plugins': {'enabled': ['advanced-delegation'], 'disabled': ['advanced-delegation']},
+              'delegation': {'backend': 'model_map', 'backends': {'model_map': {'options': [{'name': 'fast'}]}}}}
+    _fake_host(monkeypatch, config)
+    assert module._delegation_info()['installed'] is False
+    assert module._delegation_info()['available'] is False
+    _fake_host(monkeypatch, config, registered=[('default', True), ('model_map', False)])
+    info = module._delegation_info()
+    assert info['installed'] is True and info['available'] is False

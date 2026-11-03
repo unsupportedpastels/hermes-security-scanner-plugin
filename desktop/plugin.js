@@ -339,7 +339,7 @@ details.hs-fold[open]>summary{margin-bottom:8px;border-bottom:1px solid var(--ui
 .hs-workbench .hs-native-select,.hs-workbench .hs-select-trigger{height:34px;min-height:34px;width:100%;min-width:0;margin:0;border:1px solid var(--ui-stroke-secondary);border-radius:6px;background:var(--hs-surface);color:var(--foreground);font:inherit;font-size:12px;line-height:normal;cursor:pointer}
 .hs-workbench .hs-native-select{appearance:none;-webkit-appearance:none;padding:0 34px 0 10px;text-overflow:ellipsis}
 .hs-workbench .hs-select-trigger{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:0 10px;box-shadow:none}
-.hs-select-trigger>[data-slot=select-value]{min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left}
+.hs-select-trigger>.hs-select-value{min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left}
 .hs-select-trigger>.codicon{flex:none;font-size:16px}
 .hs-select-trigger>[aria-hidden=true]{display:inline-block;transform:rotate(-90deg);transform-origin:center}
 .hs-select-trigger[data-state=open]>[aria-hidden=true]{transform:rotate(0deg)}
@@ -349,7 +349,7 @@ details.hs-fold[open]>summary{margin-bottom:8px;border-bottom:1px solid var(--ui
 .hs-workbench .hs-native-select:hover,.hs-workbench .hs-select-trigger:hover{border-color:var(--ui-text-tertiary)}
 .hs-workbench .hs-native-select:disabled,.hs-workbench .hs-select-trigger:disabled{opacity:.5;cursor:default}
 .hs-workbench .hs-q>.hs-select{width:100%}.hs-native-select option{color:var(--foreground);background:var(--background)}
-.hs-select-menu{max-width:min(560px,90vw);font-size:12px}.hs-select-menu [data-slot=select-item]{overflow-wrap:anywhere}.hs-select-label{padding:8px 8px 4px;color:var(--ui-text-tertiary);font-size:11px;font-weight:500}
+.hs-select-menu{max-width:min(560px,90vw);font-size:12px}.hs-select-menu .hs-select-item{overflow-wrap:anywhere}.hs-select-label{padding:8px 8px 4px;color:var(--ui-text-tertiary);font-size:11px;font-weight:500}
 details.hs-fold>summary{display:flex;align-items:center;justify-content:space-between;gap:12px;list-style:none;min-height:40px}
 details.hs-fold>summary::-webkit-details-marker{display:none}.hs-fold-chevron{width:16px;height:16px;flex:none;transform:rotate(-90deg);color:var(--ui-text-secondary)}
 details.hs-fold[open]>summary>.hs-fold-chevron{transform:rotate(0)}
@@ -507,7 +507,7 @@ export function SelectField({ children, className = '', style, onChange, value, 
       groups.push(group)
     }
     group.items.push(jsx(sdk.SelectItem, {
-      value: `option-${i}`, disabled: choice.disabled, title: choice.title, children: choice.label
+      value: `option-${i}`, className: 'hs-select-item', disabled: choice.disabled, title: choice.title, children: choice.label
     }, `option-${i}`))
   })
   const options = groups.map((group, i) => jsxs('div', { role: group.name ? 'group' : undefined, 'aria-label': group.name, children: [
@@ -521,7 +521,7 @@ export function SelectField({ children, className = '', style, onChange, value, 
       if (choice && !disabled && !choice.disabled) onChange?.({ target: { value: choice.value } })
     },
     children: [
-      jsx(sdk.SelectTrigger, { ...props, className: `hs-select-trigger ${className}`, children: jsx(sdk.SelectValue, {}) }),
+      jsx(sdk.SelectTrigger, { ...props, className: `hs-select-trigger ${className}`, children: jsx(sdk.SelectValue, { className: 'hs-select-value' }) }),
       jsx(sdk.SelectContent, { className: 'hs-select-menu', children: options })
     ]
   }) })

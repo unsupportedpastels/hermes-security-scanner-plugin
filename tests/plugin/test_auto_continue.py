@@ -1,4 +1,5 @@
 """Hook-driven automatic continue and worker tracking, with a fake host context."""
+import os
 import sys
 import types
 
@@ -73,10 +74,23 @@ def test_completed_turn_queues_one_plain_continue(scan):
     assert 'autoresume.scheduled' in kinds
 
 
-def test_bound_session_key_is_used_when_available(scan, monkeypatch):
+def test_inherited_environment_session_key_is_never_used(scan, monkeypatch):
     service, _ = scan
+    monkeypatch.setenv('HERMES_SESSION_KEY', 'agent:main:telegram:dm:someone-else')
     module = types.ModuleType('gateway.session_context')
-    module.bound_session_key = lambda: 'agent:main:local:dm:local-abc'
+    module.get_session_env = lambda name, default='': os.environ.get(name, default)
+    monkeypatch.setitem(sys.modules, 'gateway', types.ModuleType('gateway'))
+    monkeypatch.setitem(sys.modules, 'gateway.session_context', module)
+    ctx = FakeCtx()
+    end(hooks(service, ctx))
+    assert ctx.sent[0][1] is None
+
+
+def test_session_key_is_used_when_available(scan, monkeypatch):
+    service, _ = scan
+    monkeypatch.delenv('HERMES_SESSION_KEY', raising=False)
+    module = types.ModuleType('gateway.session_context')
+    module.get_session_env = lambda name, default='': 'agent:main:local:dm:local-abc' if name == 'HERMES_SESSION_KEY' else default
     monkeypatch.setitem(sys.modules, 'gateway', types.ModuleType('gateway'))
     monkeypatch.setitem(sys.modules, 'gateway.session_context', module)
     ctx = FakeCtx()
