@@ -14,6 +14,7 @@ entry point swallows its own errors so a plugin fault never reaches the host.
 from __future__ import annotations
 
 import logging
+import os
 import re
 
 from .canonical import utcnow
@@ -203,11 +204,18 @@ def worker_stopped(service, *, parent_session_id, child_session_id, status=None,
 # ---------------------------------------------------------------- host adapters
 
 def _route_key():
+    """The calling session's route key, read through the documented plugin accessor.
+
+    ``get_session_env`` falls back to ``os.environ``, which a process can inherit from another
+    session. A key that only mirrors the environment is dropped: the key-less inject that follows
+    is routed by the host from the call's own context, so it can never reach another chat.
+    """
     try:
-        from gateway.session_context import bound_session_key
-        return bound_session_key() or ''
+        from gateway.session_context import get_session_env
+        key = get_session_env('HERMES_SESSION_KEY') or ''
     except Exception:  # not inside the gateway, or an older host
         return ''
+    return '' if key == os.environ.get('HERMES_SESSION_KEY') else key
 
 
 def make_hooks(ctx, get_service):

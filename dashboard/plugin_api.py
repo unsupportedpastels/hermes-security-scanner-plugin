@@ -43,6 +43,7 @@ _services = {}
 _services_lock = threading.Lock()
 _log = logging.getLogger('hermes_security.dashboard')
 MAX_JSON_BYTES = 2 * 1024 * 1024
+ADVANCED_DELEGATION = 'advanced-delegation'
 _ERRORS = {
     'invalid_input': (400, 'Invalid request.'),
     'not_found': (404, 'Requested record was not found.'),
@@ -141,17 +142,24 @@ def _delegation_info():
     info = {'installed': False, 'backend': 'default', 'available': False, 'choices': [], 'default': None}
     try:
         from agent.delegation_backends import list_backends
-        from hermes_cli.config import load_config
-        from hermes_cli.plugins import discover_plugins
+        from hermes_cli.config import load_config_readonly
     except ImportError:
         return info
-    discover_plugins()
+    config = load_config_readonly()
+    config = config if isinstance(config, dict) else {}
+    # The dashboard process may never load plugins, so its backend registry can be empty. Use it
+    # when it knows the backend; otherwise trust the profile's plugins.enabled list. Core still
+    # fails closed at delegate_task time if the backend cannot run.
     backends = {b.name: b for b in list_backends()}
-    info['installed'] = bool({'model_map', 'profile_routes'} & backends.keys())
-    delegation = load_config().get('delegation') or {}
+    plugins = config.get('plugins') if isinstance(config.get('plugins'), dict) else {}
+    enabled = set(plugins.get('enabled') or []) - set(plugins.get('disabled') or [])
+    info['installed'] = bool({'model_map', 'profile_routes'} & backends.keys()) or ADVANCED_DELEGATION in enabled
+    delegation = config.get('delegation') if isinstance(config.get('delegation'), dict) else {}
     backend = str(delegation.get('backend') or 'default').strip().lower() or 'default'
     block = (delegation.get('backends') or {}).get(backend) or {}
-    info.update(backend=backend, available=bool(backends.get(backend) and backends[backend].available))
+    available = backends[backend].available if backend in backends else (
+        info['installed'] and backend in ('model_map', 'profile_routes'))
+    info.update(backend=backend, available=bool(available))
     rows = block.get('options') if backend == 'model_map' else block.get('profiles') if backend == 'profile_routes' else None
     for row in rows if isinstance(rows, list) else []:
         if isinstance(row, dict) and isinstance(row.get('name'), str) and row['name'].strip():
