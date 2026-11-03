@@ -409,7 +409,8 @@ test('high confidence without excerpt has warning and proof-gap explanation', ()
     plugin.Evidence({ finding: { confidence: { level: 'high' }, validation: { status: 'NOT_RUN' } } })
   )
   assert.match(output, /High confidence was recorded without a code excerpt/)
-  assert.match(output, /Not tested: supported by reading the code/)
+  assert.match(output, /No test result recorded/)
+  assert.doesNotMatch(output, /supported by reading the code/)
 })
 test('secret evidence renders only type and fingerprint, never raw excerpt', () => {
   const output = render(

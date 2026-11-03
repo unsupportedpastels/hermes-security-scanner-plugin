@@ -1073,7 +1073,10 @@ class SecurityService:
         with self.store._connection() as conn:
             total = conn.execute('SELECT count(*)' + base, args).fetchone()[0]
             items = []
-            for row in conn.execute('SELECT ' + columns + base + ' ORDER BY f.rowid DESC LIMIT ? OFFSET ?', args + [limit, offset]):
+            # Worst severity first (unknown/unrecognized last), newest first within a severity.
+            order = (" ORDER BY CASE f.severity WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2"
+                     " WHEN 'low' THEN 3 WHEN 'informational' THEN 4 ELSE 5 END, f.rowid DESC")
+            for row in conn.execute('SELECT ' + columns + base + order + ' LIMIT ? OFFSET ?', args + [limit, offset]):
                 item = dict(row)
                 for key in ('cwe', 'owasp'):
                     item[key] = json.loads(item[key])

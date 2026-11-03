@@ -195,6 +195,40 @@ def test_sql_filters_and_pagination(populated):
     assert client.get(PREFIX + '/scans/' + sid, params={'section': 'findings', 'offset': 1}).json() == {'items': [], 'total': 1}
 
 
+def test_findings_sort_worst_severity_first_before_pagination(populated):
+    module, client, root, sid, fid, secret = populated
+    store = module.get_service().store
+    # Insertion order is oldest -> newest, deliberately not severity order.
+    rows = [('crit-old', 'critical', 'candidate'), ('info', 'informational', 'source_supported'),
+            ('low', 'low', 'candidate'), ('unknown', 'unknown', 'source_supported'),
+            ('medium', 'medium', 'candidate'), ('high', 'high', 'source_supported'),
+            ('crit-new', 'critical', 'source_supported')]
+    with store.transaction() as conn:
+        columns = [r[1] for r in conn.execute('PRAGMA table_info(findings)')]
+        template = dict(conn.execute('SELECT * FROM findings WHERE finding_id=?', (fid,)).fetchone())
+        conn.execute('DELETE FROM findings')
+        for name, severity, evidence in rows:
+            values = {**template, 'finding_id': 'f-' + name, 'occurrence_id': 'o-' + name,
+                      'severity': severity, 'evidence_state': evidence}
+            conn.execute('INSERT INTO findings(' + ','.join(columns) + ') VALUES(' + ','.join('?' * len(columns)) + ')',
+                         [values[c] for c in columns])
+    order = ['f-crit-new', 'f-crit-old', 'f-high', 'f-medium', 'f-low', 'f-info', 'f-unknown']
+    seen = []
+    for offset in (0, 3, 6):
+        page = client.get(PREFIX + '/findings', params={'limit': 3, 'offset': offset}).json()
+        assert page['total'] == 7
+        assert all('data' not in item and 'codeEvidence' not in item for item in page['items'])
+        seen += [item['finding_id'] for item in page['items']]
+    assert seen == order
+    # evidenceState stays a server-side filter applied before ordering and LIMIT.
+    page = client.get(PREFIX + '/findings', params={'evidenceState': 'candidate', 'limit': 2}).json()
+    assert page['total'] == 3
+    assert [item['finding_id'] for item in page['items']] == ['f-crit-old', 'f-medium']
+    page = client.get(PREFIX + '/findings', params={'evidenceState': 'source_supported', 'limit': 2, 'offset': 2}).json()
+    assert page['total'] == 4
+    assert [item['finding_id'] for item in page['items']] == ['f-info', 'f-unknown']
+
+
 @pytest.mark.parametrize('path', ['/scans?limit=101', '/findings?offset=-1', '/repositories?limit=101', '/scans/x?limit=101', '/scans/x/activity?limit=501', '/scans/x/activity?after_id=-1', '/findings?chained=nonsense'])
 def test_bad_query_is_sanitized_400(api, path):
     _, client = api
@@ -292,8 +326,8 @@ def test_sql_trace_filters_precede_limit(populated, monkeypatch):
     monkeypatch.setattr(service.store, '_connection', traced)
     response = client.get(PREFIX + '/findings', params={'validationLevel': 'static', 'limit': 1, 'offset': 1})
     assert response.json() == {'items': [], 'total': 1}
-    query = next(q for q in queries if 'ORDER BY f.rowid DESC LIMIT 1 OFFSET 1' in q)
-    assert "json_extract(f.data,'$.validation.level')='static'" in query
+    query = next(q for q in queries if 'END, f.rowid DESC LIMIT 1 OFFSET 1' in q)
+    assert "json_extract(f.data,'$.validation.level')='static'" in query.split(' ORDER BY ')[0]
     assert ',f.data,' not in query.split(' FROM findings')[0]
     assert not query.startswith('SELECT f.data')
     queries.clear()
