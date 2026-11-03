@@ -5,8 +5,11 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+# The plugin root must come first: Hermes core on PYTHONPATH (as in the official-plugins CI)
+# also ships top-level `evals` and `tests` packages.
+while str(ROOT) in sys.path:
+    sys.path.remove(str(ROOT))
+sys.path.insert(0, str(ROOT))
 
 
 @pytest.fixture(autouse=True)
