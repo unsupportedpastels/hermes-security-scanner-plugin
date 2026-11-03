@@ -7,7 +7,7 @@ metadata:
   hermes:
     tags: [security, evidence, hermes-security]
 ---
-<!-- # Adapted from openai/codex-security@89aae24 plugins/codex-security/skills/security-scan/SKILL.md; plugins/codex-security/references/core-scan.md; plugins/codex-security/skills/deep-security-scan/SKILL.md (Apache-2.0). Modified for hermes-security. -->
+<!-- # Modified from Apache-2.0 source skills/security-scan/SKILL.md; references/core-scan.md; skills/deep-security-scan/SKILL.md (see NOTICE). -->
 
 # Security audit
 

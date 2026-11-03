@@ -6,7 +6,7 @@ from hermes_security.compat.codex_import import import_codex_bundle
 from hermes_security.domain.validate import validate_document
 from hermes_security.errors import ValidationError
 
-# Vendored verbatim from openai/codex-security@89aae24 (tests/fixtures/upstream/.../SOURCE.txt); never skip.
+# Vendored verbatim from the pinned upstream (tests/fixtures/upstream/.../SOURCE.txt); never skip.
 UPSTREAM=Path(__file__).resolve().parents[1]/'fixtures'/'upstream'/'codex-security-completed-scan'
 
 def test_vendored_upstream_fixture_present():

@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://hermes-security.local/schemas/scan-manifest.schema.json",
-  "$comment": "Adapted from openai/codex-security@89aae24 schemas/scan-manifest.schema.json (Apache-2.0). Modified for hermes-security.",
+  "$comment": "Modified from Apache-2.0 source schemas/scan-manifest.schema.json (see NOTICE).",
   "type": "object",
   "properties": {
     "documentType": {

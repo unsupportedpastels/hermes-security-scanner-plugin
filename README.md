@@ -190,6 +190,6 @@ hermes plugins validate .
 ```
 
 Provenance regeneration needs the pinned upstream checkout. Use
-`--source-root /path/to/codex-security` to override the research-checkout default.
+`--source-root /path/to/upstream-checkout` to override the default.
 Run regeneration after adapting a file, and `--check` before accepting changes.
 See `LICENSE`, `NOTICE`, and `THIRD_PARTY_NOTICES.md` for legal attribution.

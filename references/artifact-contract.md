@@ -1,4 +1,4 @@
-<!-- # Adapted from openai/codex-security@89aae24 plugins/codex-security/references/scan-contract.md; plugins/codex-security/references/final-report.md (Apache-2.0). Modified for hermes-security. -->
+<!-- # Modified from Apache-2.0 source references/scan-contract.md; references/final-report.md (see NOTICE). -->
 # Canonical artifact contract
 
 `docs/CONTRACT.md` is authoritative. All canonical JSON uses camelCase and `schemaVersion: "1.0"`. The plugin owns serialization, identities, storage, finalization, and seals. Workers submit records, never author or rewrite shared artifacts.

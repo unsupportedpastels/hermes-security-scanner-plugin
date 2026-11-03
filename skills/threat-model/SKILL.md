@@ -7,7 +7,7 @@ metadata:
   hermes:
     tags: [security, evidence, hermes-security]
 ---
-<!-- # Adapted from openai/codex-security@89aae24 plugins/codex-security/skills/threat-model/SKILL.md; plugins/codex-security/references/threat-model.md (Apache-2.0). Modified for hermes-security. -->
+<!-- # Modified from Apache-2.0 source skills/threat-model/SKILL.md; references/threat-model.md (see NOTICE). -->
 
 # Threat model
 

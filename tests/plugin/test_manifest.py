@@ -90,7 +90,7 @@ def test_provenance_regeneration_and_drift(tmp_path):
     upstream.mkdir(parents=True)
     (upstream / "sample.md").write_text("Original methodology\n")
     adapted = repo / "sample.md"
-    notice = "<!-- Adapted from " + "openai/codex-security@89aae24 references/sample.md (Apache-2.0). Modified for hermes-security. -->\n"
+    notice = "<!-- Modified from " + "Apache-2.0 source references/sample.md (see NOTICE). -->\n"
     adapted.write_text(notice + "Local adaptation\n")
     argv = ["--repo-root", str(repo), "--source-root", str(source)]
     assert module.main(argv + ["--check"]) == 1
@@ -120,7 +120,7 @@ def test_provenance_json_notice_and_root_relative_source(tmp_path):
     repo.mkdir()
     source.mkdir()
     (source / "original.json").write_text("{}")
-    notice = "Adapted from " + "openai/codex-security@89aae24 original.json (Apache-2.0). Modified for hermes-security."
+    notice = "Modified from " + "Apache-2.0 source original.json (see NOTICE)."
     (repo / "adapted.json").write_text(json.dumps({"$comment": notice}, indent=2))
     entries = module.collect_entries(repo, source)
     assert len(entries) == 1
@@ -137,7 +137,7 @@ def test_provenance_multi_source_notice(tmp_path):
     repo.mkdir()
     (source / "refs/a.md").write_text("A")
     (source / "refs/b.md").write_text("B")
-    notice = "<!-- # Adapted from " + "openai/codex-security@89aae24 refs/a.md; refs/b.md (Apache-2.0). Modified for hermes-security. -->\n"
+    notice = "<!-- # Modified from " + "Apache-2.0 source refs/a.md; refs/b.md (see NOTICE). -->\n"
     (repo / "merged.md").write_text(notice + "body\n")
     entries = module.collect_entries(repo, source)
     assert [e["source"] for e in entries] == ["refs/a.md", "refs/b.md"]

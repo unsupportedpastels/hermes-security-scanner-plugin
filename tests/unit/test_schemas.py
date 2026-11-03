@@ -85,5 +85,5 @@ def test_schema_documents_use_2020_12_and_closed_objects():
         s=json.loads(p.read_text())
         assert s['$schema'].endswith('/2020-12/schema')
         assert s['additionalProperties'] is False
-        assert ('Modified for hermes-security' in s['$comment']
+        assert (s['$comment'].startswith('Modified from Apache-2.0 source')
                 or s['$comment'].startswith('Original to hermes-security'))

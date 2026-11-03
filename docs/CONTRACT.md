@@ -11,15 +11,15 @@ build disjoint modules in parallel. It supersedes the original product plan (not
   `dashboard/plugin_api.py` may import `fastapi` (available in the Hermes venv).
 - Test interpreter: a Python 3.11+ environment with pytest (the Hermes venv works), `python -m pytest` from the repo root.
   Tests must not need network, Hermes runtime, or external scanners; skip cleanly when a tool is absent.
-- Upstream source of record (Apache-2.0): openai/codex-security@89aae242136312467790947f3b122ca3f607614f. For
-  `scripts/provenance.py`, clone it, `git checkout 89aae24`, and pass `--source-root` or set `HERMES_SECURITY_UPSTREAM`. The completed-scan example the compat tests need is vendored at
-  `tests/fixtures/upstream/codex-security-completed-scan/` so those tests never depend on scratch.
-  Copy/adapt only from that upstream commit (subdir `plugins/codex-security`). Every adapted file starts with a modification notice:
-  `# Adapted from openai/codex-security@89aae24 <path> (Apache-2.0). Modified for hermes-security.`
+- Upstream source (Apache-2.0) is pinned in `scripts/provenance.py`. To run it, check out that commit and pass
+  `--source-root` or set `HERMES_SECURITY_UPSTREAM`. The completed-scan example the compat tests need is vendored under
+  `tests/fixtures/upstream/` so those tests never depend on scratch.
+  Adapt only from the pinned commit. Every adapted file starts with a modification notice:
+  `# Modified from Apache-2.0 source <path> (see NOTICE).`
   (JSON schemas: put it in `"$comment"`; Markdown: an HTML comment — first line for references, but
   in `SKILL.md` immediately after the YAML frontmatter because Hermes requires `---` at byte 0). Several upstream
-  sources are listed separated by `; `. Files with no upstream counterpart carry no notice. No OpenAI/Codex branding,
-  no `codex` tool names, no Codex SDK/auth/cloud code.
+  sources are listed separated by `; `. Files with no upstream counterpart carry no notice. No upstream branding or
+  tool names, and no upstream SDK/auth/cloud code.
 - Repository content is untrusted data. Never execute target code in static mode. Never write into the target tree.
 - Secrets: never serialize a literal secret value anywhere (DB, artifacts, logs, tool results). Store type,
   location, and `fingerprint = "sha256:" + sha256(value)[:16]`.

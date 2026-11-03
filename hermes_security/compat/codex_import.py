@@ -1,4 +1,4 @@
-# Adapted from openai/codex-security@89aae24 schemas/findings.schema.json; schemas/coverage.schema.json; schemas/scan-manifest.schema.json (Apache-2.0). Modified for hermes-security.
+# Modified from Apache-2.0 source schemas/findings.schema.json; schemas/coverage.schema.json; schemas/scan-manifest.schema.json (see NOTICE).
 """Import v1 bundles as new documents, never as byte-identical sealed artifacts.
 
 Return keys are filenames. Original documents/records live in provenance.upstream.

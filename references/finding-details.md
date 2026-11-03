@@ -1,4 +1,4 @@
-<!-- # Adapted from openai/codex-security@89aae24 plugins/codex-security/references/finding-detail-fields.md; plugins/codex-security/references/final-report.md; plugins/codex-security/references/static-finding-assessment.md (Apache-2.0). Modified for hermes-security. -->
+<!-- # Modified from Apache-2.0 source references/finding-detail-fields.md; references/final-report.md; references/static-finding-assessment.md (see NOTICE). -->
 # Finding details and readable copy
 
 Use the camelCase fields from `docs/CONTRACT.md`, not a parallel prose schema. Findings are structured evidence, and `report.md` is a projection. Do not reconstruct missing evidence by parsing a report.

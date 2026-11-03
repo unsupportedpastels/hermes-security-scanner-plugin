@@ -1,14 +1,10 @@
 # Third-party notices
 
-## Adapted source and methodology
+## Apache-2.0 source
 
-OpenAI codex-security, copyright 2025 OpenAI, is licensed under Apache-2.0.
-The source of record is https://github.com/openai/codex-security at
-`89aae242136312467790947f3b122ca3f607614f`.
-The full license is in `LICENSE`; attribution and modification details are in
-`NOTICE`. Adapted files carry individual modification notices and appear in
-`UPSTREAM_PROVENANCE.json` with source and destination SHA-256 hashes.
-No proprietary marketplace source, SDK, authentication code, or logos are bundled.
+Some files are modified from Apache-2.0 licensed source, copyright 2025 OpenAI.
+Each carries a modification notice, and `UPSTREAM_PROVENANCE.json` records
+source and destination hashes. See `LICENSE` and `NOTICE`.
 
 ## Host and optional programs
 

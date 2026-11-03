@@ -1,4 +1,4 @@
-<!-- # Adapted from openai/codex-security@89aae24 plugins/codex-security/skills/attack-path-analysis/references/severity-policy.md; plugins/codex-security/skills/attack-path-analysis/SKILL.md; plugins/codex-security/references/core-scan.md (Apache-2.0). Modified for hermes-security. -->
+<!-- # Modified from Apache-2.0 source skills/attack-path-analysis/references/severity-policy.md; skills/attack-path-analysis/SKILL.md; references/core-scan.md (see NOTICE). -->
 # Severity from reachable impact
 
 Rate only after source/control/sink/boundary and counterevidence are established. Keep the following fields separate rather than hiding uncertainty inside one label:

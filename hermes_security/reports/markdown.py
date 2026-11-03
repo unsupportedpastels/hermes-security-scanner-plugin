@@ -1,4 +1,4 @@
-# Adapted from openai/codex-security@89aae24 plugins/codex-security/scripts/report_projection.py (Apache-2.0). Modified for hermes-security.
+# Modified from Apache-2.0 source scripts/report_projection.py (see NOTICE).
 """Deterministic layered Markdown; quoted code remains byte-for-byte unchanged."""
 from __future__ import annotations
 

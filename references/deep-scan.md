@@ -1,4 +1,4 @@
-<!-- # Adapted from openai/codex-security@89aae24 plugins/codex-security/skills/deep-security-scan/SKILL.md; plugins/codex-security/references/core-scan.md; plugins/codex-security/references/scan-contract.md (Apache-2.0). Modified for hermes-security. -->
+<!-- # Modified from Apache-2.0 source skills/deep-security-scan/SKILL.md; references/core-scan.md; references/scan-contract.md (see NOTICE). -->
 # Bounded Deep review and source conservation
 
 Deep is an explicit mode of security-audit, not another scan-entry skill. Require an explicit budget before starting: total wall time, N complete passes (default 3), worker/concurrency allowance (the scan's rolling pool of at most 10 delegates unless the user sets fewer), model-work cap when measurable, and time reserved for adjudication/reduction/finalization. If the user asks for Deep without enough budget information, agree a finite limit rather than launching unbounded work.

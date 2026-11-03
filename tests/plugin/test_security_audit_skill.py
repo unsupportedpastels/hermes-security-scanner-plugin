@@ -12,21 +12,21 @@ SKILLS = ("security-audit", "security-diff-review", "threat-model", "validate-fi
           "fix-finding", "verify-fix", "define-security-policy")
 REFERENCES = ("core-scan", "finding-details", "severity-policy", "artifact-contract",
               "threat-model", "deep-scan", "worker-packet")
-NOTICE = re.compile(r"\A<!-- # Adapted from openai/codex-security@89aae24 .+? \(Apache-2\.0\)\. Modified for hermes-security\. -->\n", re.S)
+NOTICE = re.compile(r"\A<!-- # Modified from Apache-2\.0 source .+? \(see NOTICE\)\. -->\n", re.S)
 
 
 def text(relative):
     return (ROOT / relative).read_text(encoding="utf-8")
 
 
-SKILL_NOTICE = re.compile(r"\A---\n.*?\n---\n<!-- # Adapted from openai/codex-security@89aae24 .+? \(Apache-2\.0\)\. Modified for hermes-security\. -->\n", re.S)
+SKILL_NOTICE = re.compile(r"\A---\n.*?\n---\n<!-- # Modified from Apache-2\.0 source .+? \(see NOTICE\)\. -->\n", re.S)
 
 
 def without_notice(content):
     # Hermes parse_frontmatter requires --- at byte zero, so SKILL.md files carry
     # the notice immediately after the frontmatter; references carry it first.
     content = NOTICE.sub("", content, count=1)
-    return re.sub(r"^<!-- # Adapted from openai/codex-security@89aae24 [^\n]+? \(Apache-2\.0\)\. Modified for hermes-security\. -->\n",
+    return re.sub(r"^<!-- # Modified from Apache-2\.0 source [^\n]+? \(see NOTICE\)\. -->\n",
                   "", content, count=1, flags=re.M)
 
 

@@ -22,8 +22,8 @@ HERMES = {
 DEFAULT_SOURCE = Path(os.environ.get("HERMES_SECURITY_UPSTREAM", "codex-security"))
 NOTICE = re.compile(
     r'^\s*(?:#\s*|<!--\s*(?:#\s*)?|"\$comment"\s*:\s*")'
-    r'Adapted from openai/codex-security@89aae24\s+'
-    r'([^\n]+?)\s+\(Apache-2\.0\)\. Modified for hermes-security\.',
+    r'Modified from Apache-2\.0 source\s+'
+    r'([^\n]+?)\s+\(see NOTICE\)\.',
     re.MULTILINE,
 )
 SOURCE_PATH = re.compile(r'[^\s<>"]+')

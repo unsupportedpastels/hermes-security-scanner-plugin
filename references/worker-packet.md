@@ -1,4 +1,4 @@
-<!-- # Adapted from openai/codex-security@89aae24 plugins/codex-security/references/core-scan.md; plugins/codex-security/references/scan-contract.md (Apache-2.0). Modified for hermes-security. -->
+<!-- # Modified from Apache-2.0 source references/core-scan.md; references/scan-contract.md (see NOTICE). -->
 # Worker packet and result protocol
 
 This is the exact brief template for baseline, investigator, deep-pass, diff, and validator attempts. Resolve this installed reference before dispatch. Copy returned scan identities exactly; do not invent a root, snapshot digest, methodology version, or source inventory. The parent alone owns the scan and finalization.

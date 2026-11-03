@@ -1,4 +1,4 @@
-# Adapted from openai/codex-security@89aae24 plugins/codex-security/scripts/finalize_scan_contract.py (Apache-2.0). Modified for hermes-security.
+# Modified from Apache-2.0 source scripts/finalize_scan_contract.py (see NOTICE).
 """SARIF 2.1.0 projection, without network or target filesystem access."""
 from __future__ import annotations
 

@@ -7,7 +7,7 @@ metadata:
   hermes:
     tags: [security, evidence, hermes-security]
 ---
-<!-- # Adapted from openai/codex-security@89aae24 plugins/codex-security/skills/define-security-policy/SKILL.md (Apache-2.0). Modified for hermes-security. -->
+<!-- # Modified from Apache-2.0 source skills/define-security-policy/SKILL.md (see NOTICE). -->
 
 # Define security policy
 

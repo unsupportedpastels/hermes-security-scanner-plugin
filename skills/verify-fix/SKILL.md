@@ -7,7 +7,7 @@ metadata:
   hermes:
     tags: [security, evidence, hermes-security]
 ---
-<!-- # Adapted from openai/codex-security@89aae24 plugins/codex-security/skills/verify-fix/SKILL.md; plugins/codex-security/references/static-finding-assessment.md (Apache-2.0). Modified for hermes-security. -->
+<!-- # Modified from Apache-2.0 source skills/verify-fix/SKILL.md; references/static-finding-assessment.md (see NOTICE). -->
 
 # Verify a fix
 
