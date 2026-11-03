@@ -8,7 +8,8 @@ import {
   useMutation,
   useValue
 } from '@hermes/plugin-sdk'
-import { useState, useEffect } from 'react'
+import * as sdk from '@hermes/plugin-sdk'
+import { useState, useEffect, useRef } from 'react'
 import { jsx, jsxs } from 'react/jsx-runtime'
 
 const ID = 'hermes-security'
@@ -325,9 +326,102 @@ details.hs-fold[open]>summary{margin-bottom:8px;border-bottom:1px solid var(--ui
 .hs-empty h3{margin:4px 0 0;font-size:15px;font-weight:600;color:var(--foreground)}.hs-empty p{margin:0;max-width:340px}.hs-empty .hs-mark{width:44px;height:44px}.hs-empty .hs-cta{margin:8px 0 0}
 .hs-bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:8px 0;min-width:0}.hs-list .hs-bar{padding:8px 12px}
 .hs-back{display:none;margin-bottom:12px}
-@container (max-width:760px){.hs-list{width:100%;border:0}.hs-detail{display:none;padding:16px}.hs-split[data-selected=true]>.hs-list{display:none}.hs-split[data-selected=true]>.hs-detail{display:block}.hs-back{display:inline-flex}}
+.hs-workbench [hidden]{display:none!important}
+.hs-workbench{--hs-surface:var(--ui-bg-editor,var(--background));--hs-raised:var(--ui-bg-elevated,var(--background))}
+.hs-sr-only{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip-path:inset(50%);white-space:nowrap;border:0}
+.hs-top{padding-top:20px;padding-bottom:5px}.hs-brand h1{font-size:18px}.hs-mark{width:36px;height:36px}
+.hs-viewbar{display:flex;align-items:center;gap:14px;min-width:0;padding:0 20px;margin-top:12px;border-bottom:1px solid var(--ui-stroke-secondary)}
+.hs-viewbar .hs-nav{flex:1;min-width:0;margin:0;padding:0;border:0}
+.hs-view-switch{display:flex;align-items:center;gap:2px;padding:2px;margin-bottom:7px;border:1px solid var(--ui-stroke-secondary);border-radius:6px}
+.hs-view-switch button{border:0;border-radius:4px;background:transparent;color:var(--ui-text-tertiary);padding:4px 9px;font:inherit;font-size:12px;cursor:pointer}
+.hs-view-switch button[aria-pressed=true]{color:var(--foreground);background:var(--chrome-action-hover)}
+.hs-select{position:relative;display:inline-flex;min-width:0;max-width:100%;vertical-align:middle}
+.hs-workbench .hs-native-select,.hs-workbench .hs-select-trigger{height:34px;min-height:34px;width:100%;min-width:0;margin:0;border:1px solid var(--ui-stroke-secondary);border-radius:6px;background:var(--hs-surface);color:var(--foreground);font:inherit;font-size:12px;line-height:normal;cursor:pointer}
+.hs-workbench .hs-native-select{appearance:none;-webkit-appearance:none;padding:0 34px 0 10px;text-overflow:ellipsis}
+.hs-workbench .hs-select-trigger{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:0 10px;box-shadow:none}
+.hs-select-trigger>[data-slot=select-value]{min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left}
+.hs-select-trigger>.codicon{flex:none;font-size:16px}.hs-select-chevron{position:absolute;right:10px;top:50%;transform:translateY(-50%);width:16px;height:16px;color:var(--ui-text-secondary);pointer-events:none}
+.hs-workbench .hs-native-select:hover,.hs-workbench .hs-select-trigger:hover{border-color:var(--ui-text-tertiary)}
+.hs-workbench .hs-native-select:disabled,.hs-workbench .hs-select-trigger:disabled{opacity:.5;cursor:default}
+.hs-workbench .hs-q>.hs-select{width:100%}.hs-native-select option{color:var(--foreground);background:var(--background)}
+.hs-select-menu{max-width:min(560px,90vw);font-size:12px}.hs-select-menu [data-slot=select-item]{overflow-wrap:anywhere}.hs-select-label{padding:8px 8px 4px;color:var(--ui-text-tertiary);font-size:11px;font-weight:500}
+details.hs-fold>summary{display:flex;align-items:center;justify-content:space-between;gap:12px;list-style:none;min-height:40px}
+details.hs-fold>summary::-webkit-details-marker{display:none}.hs-fold-chevron{width:16px;height:16px;flex:none;transform:rotate(-90deg);color:var(--ui-text-secondary)}
+details.hs-fold[open]>summary>.hs-fold-chevron{transform:rotate(0)}
+.hs-split[data-kind=findings]>.hs-list{width:390px;min-width:300px}
+.hs-split[data-kind=findings] .hs-tools{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;padding:14px}
+.hs-split[data-kind=findings] .hs-tools>.hs-find{grid-column:1/-1;height:34px;padding:0 10px}
+.hs-split[data-kind=findings] .hs-tools>.hs-select:nth-child(6){grid-column:1/-1}
+.hs-result-count{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--ui-stroke-secondary);font-size:11px;color:var(--ui-text-secondary)}
+.hs-result-count>.hs-muted{margin-left:auto;font-size:10px}.hs-result-count>.hs-link{font-size:11px;margin-left:auto}
+.hs-finding-row{display:flex;flex-direction:column;gap:6px;padding:12px 16px;border-color:var(--ui-stroke-secondary)}
+.hs-finding-row::before{background:transparent}.hs-finding-row[aria-current=true]::before{background:var(--ui-accent)}
+.hs-row-meta{display:flex;align-items:center;gap:8px;min-width:0;color:var(--ui-text-tertiary);font-size:11px}
+.hs-row-meta>code{font-size:11px}.hs-finding-head>.hs-row-meta{flex-wrap:wrap}.hs-finding-head>.hs-row-meta>code{min-width:0;overflow-wrap:anywhere}.hs-finding-title{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;line-height:1.5;font-weight:500;font-size:13px}
+.hs-finding-row>code{font-size:11px;max-width:100%}.hs-finding-row .hs-time{font-size:10px}
+.hs-evidence-state{display:inline-flex;align-items:center;gap:5px;min-width:0;font-size:11px;color:var(--ui-text-secondary)}
+.hs-evidence-state svg{width:13px;height:13px;flex:none;color:var(--ui-text-tertiary)}
+.hs-evidence-state[data-state=runtime_confirmed] svg{color:var(--hs-ok)}.hs-evidence-state[data-state=source_supported] svg{color:var(--hs-low)}
+.hs-evidence-state[data-state=candidate] svg,.hs-evidence-state[data-state=inconclusive] svg{color:var(--hs-medium)}
+.hs-split[data-kind=findings]>.hs-detail{display:flex;flex-direction:column;overflow:hidden;padding:0}
+.hs-finding-pane{max-width:none;width:100%;height:100%;min-height:0;display:flex;flex-direction:column}
+.hs-finding-body,.hs-finding-sections{flex:1;min-height:0;display:flex;flex-direction:column}
+.hs-finding-head{flex:none;padding:22px 28px 18px;border:0}
+.hs-finding-repo{margin:0 0 16px;font-size:11px;overflow-wrap:anywhere}
+.hs-finding-head h2{font-size:23px;line-height:1.35;font-weight:600;margin:10px 0 10px;letter-spacing:-.02em;overflow-wrap:anywhere}
+.hs-finding-head>.hs-loc{display:flex;align-items:center;gap:6px;overflow-wrap:anywhere;margin:0 0 18px;font-size:11px}
+.hs-finding-head>.hs-loc svg{width:13px;height:13px}.hs-finding-head .hs-cta{height:34px}.hs-finding-head .hs-select{min-width:130px}
+.hs-detail-tabs{display:flex;gap:24px;flex:none;padding:0 28px;border-bottom:1px solid var(--ui-stroke-secondary)}
+.hs-detail-tabs button{border:0;border-bottom:2px solid transparent;margin-bottom:-1px;background:transparent;color:var(--ui-text-tertiary);font:inherit;font-size:12px;padding:0 0 12px;cursor:pointer}
+.hs-detail-tabs button[aria-selected=true]{color:var(--foreground);border-bottom-color:var(--ui-accent)}
+.hs-finding-scroll{flex:1;min-height:0;overflow:auto;padding:22px 28px 32px;scrollbar-gutter:stable}
+.hs-finding-scroll .hs-block{margin-bottom:22px}.hs-finding-scroll .hs-block p{color:var(--ui-text-secondary);line-height:1.7}
+.hs-finding-scroll .hs-block h3{font-size:12px;margin-bottom:9px}.hs-finding-scroll .hs-link{font-size:11px}
+.hs-fix-summary{border-top:1px solid var(--ui-stroke-secondary);padding-top:16px;margin:0 0 22px}.hs-fix-summary>.hs-block{margin-bottom:8px}
+.hs-test-result{display:flex;align-items:flex-start;gap:9px;padding:11px 13px;margin:0 0 22px;border-left:2px solid var(--ui-stroke-secondary);border-radius:0 6px 6px 0;background:var(--chrome-action-hover);color:var(--ui-text-secondary)}
+.hs-test-result>svg{width:15px;height:15px;flex:none;margin-top:2px}.hs-test-result p{font-size:12px;line-height:1.6;margin:0!important}
+.hs-test-result[data-confirmed=true]{background:color-mix(in srgb,var(--hs-ok) 9%,transparent);border-color:var(--hs-ok)}.hs-test-result[data-confirmed=true]>svg{color:var(--hs-ok)}
+.hs-code{border:1px solid var(--ui-stroke-secondary);border-radius:7px;overflow:hidden;margin:8px 0 10px;background:var(--hs-surface)}
+.hs-code-caption{display:flex;align-items:center;gap:8px;padding:9px 12px;background:var(--chrome-action-hover);border-bottom:1px solid var(--ui-stroke-secondary);color:var(--ui-text-secondary);font-size:11px}
+.hs-code-caption>svg{width:13px;height:13px;flex:none}.hs-code-caption>span{margin-left:auto;white-space:nowrap;color:var(--ui-text-tertiary);font-size:10px}
+.hs-workbench .hs-code pre{margin:0;padding:10px 0;border-radius:0;white-space:pre;overflow-wrap:normal;overflow:auto;background:transparent;font-size:11px;line-height:1.9}
+.hs-code-line{display:block;min-width:max-content;min-height:1.9em;padding-right:12px}.hs-line-number{display:inline-block;min-width:43px;padding-right:12px;text-align:right;color:var(--ui-text-tertiary);user-select:none;-webkit-user-select:none}
+.hs-code-line[data-highlighted=true]{background:color-mix(in srgb,var(--hs-high) 12%,transparent);box-shadow:inset 2px 0 var(--hs-high)}
+.hs-workbench .hs-code-explanation{font-size:11px;color:var(--ui-text-tertiary)}.hs-excerpt{margin:0 0 18px}
+.hs-workbench .hs-patch{white-space:pre;overflow-wrap:normal;line-height:1.8}.hs-patch>span{display:block;min-width:max-content;min-height:1.8em}
+.hs-patch [data-change=add]{color:var(--hs-ok)}.hs-patch [data-change=remove]{color:var(--hs-critical)}
+.hs-table-view{flex:1;display:flex;flex-direction:column;min-width:0;min-height:0}
+.hs-table-view>.hs-tools{padding:16px 20px 10px;border:0;gap:8px}.hs-table-view .hs-find{height:34px;flex:1 1 210px}
+.hs-table-view .hs-select{max-width:220px;flex:0 1 auto}.hs-table-view>.hs-result-count{margin:0 20px;padding:4px 0 14px;border:0}
+.hs-table-view>.hs-bar{padding:10px 20px;border-top:1px solid var(--ui-stroke-secondary)}
+.hs-table-scroll{flex:1;min-height:0;overflow:auto;padding:0 20px}.hs-findings-table{border-collapse:separate;border-spacing:0;width:100%;table-layout:fixed;text-align:left}
+.hs-findings-table caption{caption-side:top}.hs-findings-table th{position:sticky;top:0;z-index:1;background:var(--hs-raised);padding:11px 12px;border-bottom:1px solid var(--ui-stroke-secondary);font-weight:500;font-size:11px;color:var(--ui-text-tertiary)}
+.hs-findings-table th:first-child{width:105px}.hs-findings-table th:nth-child(3){width:140px}.hs-findings-table th:nth-child(4){width:175px}.hs-findings-table th:nth-child(5){width:110px}
+.hs-findings-table td{padding:14px 12px;border-bottom:1px solid var(--ui-stroke-secondary);font-size:12px;color:var(--ui-text-secondary);vertical-align:middle}
+.hs-findings-table tbody tr:hover{background:var(--chrome-action-hover)}.hs-findings-table tr[data-selected=true]{background:color-mix(in srgb,var(--ui-accent) 10%,transparent)}
+.hs-table-finding{display:block;border:0;background:transparent;color:var(--foreground);font:inherit;text-align:left;padding:0;margin:0 0 7px;font-size:13px;line-height:1.5;font-weight:500;cursor:pointer;overflow-wrap:anywhere}
+.hs-findings-table td code{font-size:11px}.hs-table-empty{margin:0;padding:24px 20px}
+.hs-drawer{position:fixed;inset:0 0 0 auto;transform:none;translate:none;margin:0;width:min(680px,100vw);max-width:100vw;height:100dvh;max-height:100dvh;border:0;border-left:1px solid var(--ui-stroke-secondary);border-radius:0;padding:0;background:var(--background);color:var(--foreground);overflow:visible}
+.hs-drawer::backdrop{background:color-mix(in srgb,var(--background) 65%,transparent)}
+.hs-drawer-body{display:flex;flex:1;min-height:0;padding:0;gap:0;overflow:hidden;border-radius:0}.hs-drawer-workbench{width:100%;height:100%;flex:1;min-height:0}
+.hs-drawer-bar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 20px;border-bottom:1px solid var(--ui-stroke-secondary);flex:none}
+.hs-drawer-bar h2{margin:0;font-size:12px;font-weight:500;color:var(--ui-text-secondary)}.hs-drawer-bar .hs-btn{padding:5px;min-width:28px;min-height:28px}
+.hs-drawer .hs-back{display:none}.hs-drawer .hs-finding-head{padding-top:18px}
+@container (max-width:1050px){.hs-split[data-kind=findings]>.hs-list{width:340px}.hs-findings-table th:nth-child(3),.hs-findings-table td:nth-child(3){display:none}.hs-findings-table th:nth-child(4){width:160px}.hs-finding-head h2{font-size:21px}}
+@container (max-width:760px){.hs-list{width:100%;border:0}.hs-detail{display:none;padding:16px}.hs-split[data-selected=true]>.hs-list{display:none}.hs-split[data-selected=true]>.hs-detail{display:block}.hs-back{display:inline-flex}
+.hs-split[data-kind=findings]>.hs-list{width:100%;min-width:0}.hs-split[data-kind=findings]>.hs-detail{display:none;padding:0}.hs-split[data-kind=findings][data-selected=true]>.hs-detail{display:flex}
+.hs-top{padding:16px 16px 0;gap:12px}.hs-tally{order:3;width:100%}.hs-viewbar{padding:0 16px}.hs-nav{gap:16px}.hs-view-switch button{padding:4px 7px;font-size:11px}
+.hs-finding-head{padding:16px 18px}.hs-finding-repo{margin-bottom:10px}.hs-finding-head h2{font-size:20px}.hs-detail-tabs{padding:0 18px;gap:20px}.hs-finding-scroll{padding:18px}
+.hs-table-view>.hs-tools{padding:14px 12px 8px}.hs-table-view>.hs-result-count{margin:0 12px}.hs-table-scroll{padding:0 10px}
+.hs-findings-table th:first-child{width:85px}.hs-findings-table th:nth-child(4),.hs-findings-table td:nth-child(4){display:none}.hs-findings-table th:nth-child(5){width:85px}.hs-findings-table td,.hs-findings-table th{padding:10px 6px}
+.hs-table-finding{font-size:12px}.hs-findings-table td code{font-size:10px}.hs-result-count{flex-wrap:wrap}}
+
 `
 const ICON_SHAPES = {
+  chevron: [['path', { d: 'm6 9 6 6 6-6' }]],
+  close: [['path', { d: 'm6 6 12 12M6 18 18 6' }]],
+  check: [['path', { d: 'm5 12 4 4L19 6' }]],
+  code: [['path', { d: 'm8 8-4 4 4 4m8-8 4 4-4 4m-5-13-2 18' }]],
   search: [['circle', { cx: 11, cy: 11, r: 8 }], ['path', { d: 'm21 21-4.3-4.3' }]],
   plus: [['path', { d: 'M5 12h14M12 5v14' }]],
   shield: [['path', { d: 'M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z' }], ['path', { d: 'm9 12 2 2 4-4' }]],
@@ -346,7 +440,7 @@ export function Icon({ name, className }) {
   return jsx('svg', {
     viewBox: '0 0 24 24', width: 16, height: 16, fill: 'none', stroke: 'currentColor', strokeWidth: 2,
     strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': true, className,
-    children: (ICON_SHAPES[name] || []).map(([tag, attrs], i) => jsx(tag, attrs, i))
+    children: (ICON_SHAPES[name] || []).map(([tag, attrs], i) => jsx(tag, { ...attrs }, i))
   })
 }
 const repoName = (path) => String(path || '').replace(/[\\/]+$/, '').split(/[\\/]/).pop() || String(path || 'Repository')
@@ -370,8 +464,68 @@ function Btn({ children, ...props }) {
 function Block({ title, children, show = true }) {
   return show ? jsxs('section', { className: 'hs-block', children: [title ? jsx('h3', { children: title }) : null, children] }) : null
 }
-function Fold({ title, children }) {
-  return jsxs('details', { className: 'hs-fold', children: [jsx('summary', { children: title }), children] })
+function Fold({ title, children, open }) {
+  return jsxs('details', { className: 'hs-fold', open, children: [
+    jsxs('summary', { children: [jsx('span', { children: title }), jsx(Icon, { name: 'chevron', className: 'hs-fold-chevron' })] }),
+    children
+  ] })
+}
+// Prefer the host's accessible Select. Older Desktop builds keep native semantics
+// with a single decorative arrow; the plugin does not require newer SDK exports.
+export function SelectField({ children, className = '', style, onChange, value, disabled, native = false, ...props }) {
+  const choices = []
+  const collect = (nodes, group, groupDisabled = false) => {
+    for (const node of Array.isArray(nodes) ? nodes : [nodes]) {
+      if (!node) continue
+      if (Array.isArray(node)) { collect(node, group, groupDisabled); continue }
+      if (node.type === 'optgroup') collect(node.props.children, node.props.label, groupDisabled || node.props.disabled)
+      else if (node.type === 'option') choices.push({
+        value: String(node.props.value ?? node.props.children), label: node.props.children,
+        disabled: groupDisabled || node.props.disabled, title: node.props.title, group
+      })
+    }
+  }
+  collect(children)
+  const shared = !native && [sdk.Select, sdk.SelectTrigger, sdk.SelectValue, sdk.SelectContent, sdk.SelectItem].every(Boolean)
+  if (!shared) return jsxs('span', { className: 'hs-select', style, children: [
+    jsx('select', { ...props, className: `hs-native-select ${className}`, value, disabled, onChange, children }),
+    jsx(Icon, { name: 'chevron', className: 'hs-select-chevron' })
+  ] })
+  // Radix forbids an empty item value. Index tokens also avoid collisions with
+  // real repository/model IDs; only the original value reaches callers.
+  const selected = choices.findIndex((choice) => choice.value === String(value ?? ''))
+  const groups = []
+  choices.forEach((choice, i) => {
+    let group = groups.at(-1)
+    if (!group || group.name !== choice.group) {
+      group = { name: choice.group, items: [] }
+      groups.push(group)
+    }
+    group.items.push(jsx(sdk.SelectItem, {
+      value: `option-${i}`, disabled: choice.disabled, title: choice.title, children: choice.label
+    }, `option-${i}`))
+  })
+  const options = groups.map((group, i) => jsxs('div', { role: group.name ? 'group' : undefined, 'aria-label': group.name, children: [
+    group.name ? jsx('div', { className: 'hs-select-label', 'aria-hidden': true, children: group.name }) : null,
+    ...group.items
+  ] }, i))
+  return jsx('span', { className: 'hs-select', style, children: jsxs(sdk.Select, {
+    value: selected < 0 ? '' : `option-${selected}`, disabled,
+    onValueChange: (token) => {
+      const choice = choices.find((_, i) => `option-${i}` === token)
+      if (choice && !disabled && !choice.disabled) onChange?.({ target: { value: choice.value } })
+    },
+    children: [
+      jsx(sdk.SelectTrigger, { ...props, className: `hs-select-trigger ${className}`, children: jsx(sdk.SelectValue, {}) }),
+      jsx(sdk.SelectContent, { className: 'hs-select-menu', children: options })
+    ]
+  }) })
+}
+function EvidenceState({ state }) {
+  return jsxs('span', { className: 'hs-evidence-state', 'data-state': state, children: [
+    jsx(Icon, { name: state === 'runtime_confirmed' ? 'check' : state === 'source_supported' ? 'code' : 'alert' }),
+    label(state)
+  ] })
 }
 function Paragraph({ value }) {
   return jsx('p', { children: text(value) })
@@ -451,21 +605,77 @@ function Chip({ icon, children }) {
 }
 const locationText = (loc) =>
   loc ? `${loc.path}:${loc.startLine ?? ''}${loc.endLine && loc.endLine !== loc.startLine ? '–' + loc.endLine : ''}` : ''
-function FindingRow({ row, selected, onSelect }) {
+const findingLocation = (f) => locationText(list(f.locations)[0]) || f.path || 'Location not recorded'
+export function FindingRow({ row, selected, onSelect }) {
   const f = findingData(row)
   const level = sevOf(f)
   return jsxs('button', {
-    type: 'button', className: 'hs-item', 'data-sev': level, 'aria-current': selected, onClick: () => onSelect(findingId(f)),
+    type: 'button', className: 'hs-item hs-finding-row', 'data-sev': level, 'aria-current': selected, onClick: () => onSelect(findingId(f)),
     children: [
-      jsxs('span', { className: 'hs-item-top', children: [
-        jsx('b', { title: f.title, children: f.title || 'Untitled finding' }),
-        jsx(SevBadge, { level })
+      jsxs('span', { className: 'hs-row-meta', children: [
+        jsx(SevBadge, { level }),
+        jsx('span', { className: 'hs-truncate', title: pathOf(f), children: repoName(pathOf(f)) })
       ] }),
-      jsxs('span', { className: 'hs-item-sub', children: [
-        jsx('code', { children: locationText(list(f.locations)[0]) || repoName(pathOf(f)) }),
+      jsx('b', { className: 'hs-finding-title', title: f.title, children: f.title || 'Untitled finding' }),
+      jsx('code', { className: 'hs-truncate hs-muted', children: findingLocation(f) }),
+      jsxs('span', { className: 'hs-row-meta', children: [
+        jsx(EvidenceState, { state: f.evidenceState }),
         jsx('span', { className: 'hs-time', children: label(f.triage?.state || f.triageState || 'open') })
       ] })
     ]
+  })
+}
+export function FindingsTable({ rows, selected, onSelect }) {
+  return jsx('div', { className: 'hs-table-scroll', children: jsxs('table', { className: 'hs-findings-table', children: [
+    jsx('caption', { className: 'hs-sr-only', children: 'Findings sorted by severity' }),
+    jsx('thead', { children: jsx('tr', { children: ['Severity', 'Finding / location', 'Repository', 'Evidence', 'Status'].map((title) =>
+      jsx('th', { scope: 'col', children: title }, title)) }) }),
+    jsx('tbody', { children: rows.map((row) => {
+      const f = findingData(row)
+      return jsxs('tr', { 'data-selected': selected === findingId(f), children: [
+        jsx('td', { children: jsx(SevBadge, { level: sevOf(f) }) }),
+        jsxs('td', { children: [
+          jsx('button', { type: 'button', className: 'hs-table-finding', onClick: () => onSelect(findingId(f)), children: f.title || 'Untitled finding' }),
+          jsx('code', { className: 'hs-truncate hs-muted', children: findingLocation(f) })
+        ] }),
+        jsx('td', { children: jsx('span', { className: 'hs-truncate', title: pathOf(f), children: repoName(pathOf(f)) }) }),
+        jsx('td', { children: jsx(EvidenceState, { state: f.evidenceState }) }),
+        jsx('td', { children: label(f.triage?.state || f.triageState || 'open') })
+      ] }, findingId(f))
+    }) })
+  ] }) })
+}
+function FindingDrawer({ id, onClose }) {
+  const shared = !!(sdk.Dialog && sdk.DialogContent && sdk.DialogTitle)
+  const dialogRef = useRef(null)
+  const opener = useRef(typeof document === 'undefined' ? null : document.activeElement)
+  useEffect(() => {
+    if (shared) return
+    const dialog = dialogRef.current
+    dialog?.showModal()
+    return () => {
+      dialog?.close()
+      if (opener.current?.isConnected) opener.current.focus()
+    }
+  }, [])
+  const content = jsxs('div', { className: 'hs-workbench hs-drawer-workbench', children: [
+    jsxs('div', { className: 'hs-drawer-bar', children: [
+      jsx(shared ? sdk.DialogTitle : 'h2', { children: 'Finding details' }),
+      jsx(Btn, { onClick: onClose, 'aria-label': 'Close finding details', autoFocus: true, children: jsx(Icon, { name: 'close' }) })
+    ] }),
+    // Native dialogs cannot contain a Select portaled to document.body.
+    jsx(FindingDetail, { id, onBack: onClose, nativeSelect: !shared }, id)
+  ] })
+  if (shared) return jsx(sdk.Dialog, { open: true, modal: true, onOpenChange: (open) => { if (!open) onClose() }, children:
+    jsx(sdk.DialogContent, {
+      className: 'hs-drawer', bodyClassName: 'hs-drawer-body', showCloseButton: false, 'aria-describedby': undefined, 'aria-modal': true,
+      onCloseAutoFocus: (event) => { event.preventDefault(); if (opener.current?.isConnected) opener.current.focus() },
+      children: content
+    })
+  })
+  return jsx('dialog', {
+    ref: dialogRef, className: 'hs-drawer', 'aria-label': 'Finding details',
+    onCancel: (event) => { event.preventDefault(); onClose() }, children: content
   })
 }
 function ScanRow({ row, selected, onSelect }) {
@@ -682,7 +892,7 @@ export function NewScan({ onClose, onStarted }) {
         jsx('span', { children: 'Repository' }),
         jsxs('div', { className: 'hs-actions', children: [
           choices.length
-            ? jsx('select', { 'aria-label': 'Repository', style: { flex: 1 }, value: options.path || known[0] || '__other',
+            ? jsx(SelectField, { 'aria-label': 'Repository', style: { flex: 1 }, value: options.path || known[0] || '__other',
                 onChange: (e) => { set('path')(e.target.value); set('folder')('') },
                 children: choices.map(([v, t]) => jsx('option', { value: v, title: v === '__other' ? options.otherPath : v, children: t }, v)) })
             : null,
@@ -707,7 +917,7 @@ export function NewScan({ onClose, onStarted }) {
         ? null
         : jsxs('label', { className: 'hs-q', children: [
             jsx('span', { children: 'Scan area' }),
-            jsx('select', { 'aria-label': 'Scan area', value: options.folder, onChange: (e) => set('folder')(e.target.value),
+            jsx(SelectField, { 'aria-label': 'Scan area', value: options.folder, onChange: (e) => set('folder')(e.target.value),
               children: [['', 'Entire codebase'], ...list(folders.data?.items).map((f) => [f, f + '/'])].map(([v, t]) => jsx('option', { value: v, children: t }, v)) })
           ] }),
       jsxs('div', { className: 'hs-q', children: [
@@ -717,7 +927,7 @@ export function NewScan({ onClose, onStarted }) {
       ] }),
       jsxs('label', { className: 'hs-q', children: [
         jsx('span', { children: 'Model' }),
-        jsx('select', { 'aria-label': 'Model', value: options.model, onChange: (e) => set('model')(e.target.value), children: [
+        jsx(SelectField, { 'aria-label': 'Model', value: options.model, onChange: (e) => set('model')(e.target.value), children: [
           jsx('option', { value: '', children: currentModel ? `Same as my chats (${currentModel})` : 'Same as my chats' }, ''),
           ...groups.map((g) => jsx('optgroup', { label: g.name, children: g.models.map((m) =>
             jsx('option', { value: JSON.stringify([g.slug, m]), children: m }, m)) }, g.slug))
@@ -728,7 +938,7 @@ export function NewScan({ onClose, onStarted }) {
       routes.installed
         ? jsxs('label', { className: 'hs-q', children: [
             jsx('span', { children: 'Subagents' }),
-            jsx('select', { 'aria-label': 'Subagents', value: options.delegate, disabled: !routeChoices.length,
+            jsx(SelectField, { 'aria-label': 'Subagents', value: options.delegate, disabled: !routeChoices.length,
               onChange: (e) => set('delegate')(e.target.value), children: [
                 jsx('option', { value: '', children: routes.default ? `Default (${routes.default})` : 'Let the agent choose' }, ''),
                 ...routeChoices.map((c) => jsx('option', { value: c.name,
@@ -1156,9 +1366,47 @@ export function Chains({ chains }) {
     : jsx('p', { className: 'hs-muted', children: 'No chain steps recorded.' })
 }
 const has = (value) => (Array.isArray(value) ? value.length > 0 : !!value)
-export function Evidence({ finding: f }) {
+export function codeLines(excerpt, locations = []) {
+  const start = Number.isInteger(excerpt.startLine) && excerpt.startLine > 0 ? excerpt.startLine : null
+  return String(excerpt.code ?? '').split('\n').map((line, index) => {
+    const number = start === null ? null : start + index
+    const highlighted = number !== null && list(locations).some((loc) =>
+      loc.path === excerpt.path && Number.isInteger(loc.startLine) && loc.startLine > 0 &&
+      number >= loc.startLine && number <= (Number.isInteger(loc.endLine) ? loc.endLine : loc.startLine))
+    return { text: line, number, highlighted }
+  })
+}
+function CodeExcerpt({ excerpt, locations }) {
+  return jsxs('div', { className: 'hs-code', children: [
+    jsxs('div', { className: 'hs-code-caption', children: [
+      jsx(Icon, { name: 'file' }),
+      jsx('code', { className: 'hs-truncate', title: excerpt.path, children: excerpt.path || 'File not recorded' }),
+      Number.isInteger(excerpt.startLine) ? jsx('span', { children: `Lines ${excerpt.startLine}${excerpt.endLine ? '–' + excerpt.endLine : ''}` }) : null
+    ] }),
+    jsx('pre', { tabIndex: 0, 'aria-label': 'Code evidence', children: excerpt.code
+      ? jsx('code', { children: codeLines(excerpt, locations).map((line, index) => jsxs('span', {
+          className: 'hs-code-line', 'data-highlighted': line.highlighted,
+          children: [jsx('span', { className: 'hs-line-number', 'aria-hidden': true, children: line.number ?? '' }), line.text]
+        }, index)) })
+      : 'No code excerpt available' })
+  ] })
+}
+export function testResultText(f) {
+  if (f.validation?.status && f.validation.status !== 'NOT_RUN')
+    return `Test result: ${label(f.validation.status)}${f.validation.summary ? ' — ' + f.validation.summary : ''}`
+  if (f.evidenceState === 'source_supported') return 'Not tested: supported by reading the code.'
+  if (f.evidenceState === 'rejected') return 'Not tested: marked as not an issue.'
+  if (f.evidenceState === 'candidate') return 'Not tested: this finding still needs review.'
+  return 'No test result recorded. Review the evidence and any remaining proof gaps.'
+}
+function TestResult({ finding: f }) {
+  const confirmed = f.validation?.status === 'runtime_confirmed'
+  return jsxs('div', { className: 'hs-test-result', 'data-confirmed': confirmed, children: [
+    jsx(Icon, { name: 'flask' }), jsx('p', { children: testResultText(f) })
+  ] })
+}
+export function Evidence({ finding: f, compact = false, showResult = true }) {
   const excerpts = list(f.codeEvidence)
-  const tested = f.validation?.status && f.validation.status !== 'NOT_RUN'
   return jsxs('div', { children: [
     f.confidence?.level === 'high' && !excerpts.some((e) => e.code)
       ? jsx('div', { role: 'alert', className: 'hs-alert', children: 'High confidence was recorded without a code excerpt, so this still needs a look at the source.' })
@@ -1166,35 +1414,105 @@ export function Evidence({ finding: f }) {
     f.secret
       ? jsx('p', { children: `Secret type: ${text(f.secret.type)} · fingerprint ${text(f.secret.fingerprint)}. The value itself is never shown or stored.` })
       : excerpts.length
-        ? excerpts.map((e, i) => jsxs('div', { children: [
-            jsx('p', { className: 'hs-loc hs-muted', children: `${e.path}:${e.startLine}–${e.endLine}${e.label ? ' · ' + e.label : ''}` }),
-            jsx('pre', { tabIndex: 0, children: e.code || 'No code excerpt available' }),
-            e.explanation ? jsx('p', { children: e.explanation }) : null
+        ? (compact ? excerpts.slice(0, 1) : excerpts).map((e, i) => jsxs('div', { className: 'hs-excerpt', children: [
+            e.label ? jsx('p', { className: 'hs-muted', children: e.label }) : null,
+            jsx(CodeExcerpt, { excerpt: e, locations: f.locations }),
+            e.explanation ? jsx('p', { className: 'hs-code-explanation', children: e.explanation }) : null
           ] }, e.id || i))
         : jsx('p', { className: 'hs-muted', children: 'No code excerpt available.' }),
     has(f.counterEvidence) ? jsxs('div', { children: [jsx('p', { className: 'hs-muted', children: 'What argues against it' }), jsx(Bullets, { values: f.counterEvidence })] }) : null,
     has(f.proofGaps) ? jsxs('div', { children: [jsx('p', { className: 'hs-muted', children: 'Still unproven' }), jsx(Bullets, { values: f.proofGaps })] }) : null,
-    jsx('p', { className: 'hs-muted', children: tested
-      ? `Test result: ${label(f.validation.status)}${f.validation.summary ? ' — ' + f.validation.summary : ''}`
-      : 'Not tested: supported by reading the code.' })
+    showResult ? jsx(TestResult, { finding: f }) : null
   ] })
 }
-function FindingSummary({ finding: f }) {
+function FindingReasoning({ finding: f }) {
   const steps = list(f.attackPath?.steps)
   const conditions = [...list(f.attackPath?.controls), ...list(f.attackPath?.assumptions), ...list(f.severity?.prerequisites)]
   return jsxs('div', { children: [
-    jsx(Block, { title: 'What’s wrong', show: has(f.summary), children: jsx('p', { children: f.summary }) }),
-    jsx(Block, { title: 'How it could be abused', show: has(steps) || has(f.attackPath?.source), children: [
+    jsxs(Block, { title: 'How it could be abused', show: has(steps) || has(f.attackPath?.source) || has(f.attackPath?.sink) || has(conditions), children: [
       has(f.attackPath?.source) || has(f.attackPath?.sink)
         ? jsx('p', { className: 'hs-muted', children: `From ${f.attackPath?.source || 'unknown input'} to ${f.attackPath?.sink || 'unknown sink'}` }) : null,
       has(steps) ? jsx('ol', { children: steps.map((step, i) => jsx('li', { children: text(step) }, i)) }) : null,
       has(conditions) ? jsxs('div', { children: [jsx('p', { className: 'hs-muted', children: 'Only works if' }), jsx(Bullets, { values: conditions })] }) : null
     ] }),
     jsx(Block, { title: 'Why it happens', show: has(f.rootCause), children: jsx('p', { children: f.rootCause }) }),
-    jsx(Block, { title: 'Evidence', children: jsx(Evidence, { finding: f }) }),
-    jsx(Block, { title: 'How to fix it', show: has(f.remediation?.summary), children: [
-      jsx('p', { children: f.remediation?.summary }),
-      has(f.remediation?.regressionTests) ? jsxs('div', { children: [jsx('p', { className: 'hs-muted', children: 'Tests to add' }), jsx(Bullets, { values: f.remediation.regressionTests })] }) : null
+    jsx(Block, { title: 'Severity rationale', show: has(f.severity?.rationale), children: jsx('p', { children: f.severity?.rationale }) })
+  ] })
+}
+function Remediation({ finding: f, compact = false }) {
+  return jsxs(Block, { title: 'How to fix it', show: has(f.remediation?.summary) || has(f.remediation?.regressionTests), children: [
+    has(f.remediation?.summary) ? jsx('p', { children: f.remediation.summary }) : null,
+    !compact && has(f.remediation?.regressionTests) ? jsxs('div', { children: [
+      jsx('p', { className: 'hs-muted', children: 'Tests to add' }), jsx(Bullets, { values: f.remediation.regressionTests })
+    ] }) : null
+  ] })
+}
+function FindingSummary({ finding: f, onSection }) {
+  return jsxs('div', { children: [
+    jsx(Block, { title: 'What’s wrong', show: has(f.summary), children: jsx('p', { children: f.summary }) }),
+    jsx(TestResult, { finding: f }),
+    jsxs(Block, { title: 'Evidence', children: [
+      jsx(Evidence, { finding: f, compact: true, showResult: false }),
+      jsx('button', { type: 'button', className: 'hs-link', onClick: () => onSection('evidence'),
+        children: list(f.codeEvidence).length > 1 && !f.secret ? `View all ${f.codeEvidence.length} code excerpts and evidence` : 'View full evidence' })
+    ] }),
+    jsxs('div', { className: 'hs-fix-summary', children: [
+      jsx(Remediation, { finding: f, compact: true }),
+      jsx('button', { type: 'button', className: 'hs-link', onClick: () => onSection('remediation'), children: 'View patch and regression tests' })
+    ] }),
+    jsx(Fold, { title: 'Attack path, prerequisites and reasoning', children: jsx(FindingReasoning, { finding: f }) })
+  ] })
+}
+function PatchPreview({ content }) {
+  return jsx('pre', { className: 'hs-patch', tabIndex: 0, children: String(content).split('\n').map((line, i) =>
+    jsx('span', { 'data-change': line.startsWith('+') ? 'add' : line.startsWith('-') ? 'remove' : undefined, children: line }, i)) })
+}
+function FindingSections({ id, finding: f, patch, chains, note, setNote, saveNote, saving }) {
+  const [section, setSection] = useState('overview')
+  const tabs = [['overview', 'Overview'], ['evidence', 'Evidence'], ['remediation', 'Remediation']]
+  const tags = [f.taxonomy?.category, ...list(f.taxonomy?.cwe), ...list(f.taxonomy?.owasp)].filter(Boolean)
+  const tabId = (name) => `hs-${id}-${name}-tab`
+  const panelId = (name) => `hs-${id}-${name}-panel`
+  const choose = (name) => {
+    setSection(name)
+    // Section links and keyboard tabs both land in a predictable reading position.
+    if (typeof document === 'undefined') return
+    document.getElementById(tabId(name))?.focus()
+    const panel = document.getElementById(panelId(name))
+    if (panel?.parentElement) panel.parentElement.scrollTop = 0
+  }
+  return jsxs('div', { className: 'hs-finding-sections', children: [
+    jsx('div', { className: 'hs-detail-tabs', role: 'tablist', 'aria-label': 'Finding sections', children: tabs.map(([name, title], index) =>
+      jsx('button', { type: 'button', role: 'tab', id: tabId(name), 'aria-controls': panelId(name), 'aria-selected': section === name,
+        tabIndex: section === name ? 0 : -1, onClick: () => choose(name),
+        onKeyDown: (event) => {
+          const next = event.key === 'ArrowRight' ? (index + 1) % tabs.length : event.key === 'ArrowLeft' ? (index + tabs.length - 1) % tabs.length
+            : event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1 : null
+          if (next !== null) { event.preventDefault(); choose(tabs[next][0]) }
+        }, children: title
+      }, name)) }),
+    jsxs('div', { className: 'hs-finding-scroll', 'data-selectable-text': true, children: [
+      jsx('section', { role: 'tabpanel', id: panelId('overview'), 'aria-labelledby': tabId('overview'), hidden: section !== 'overview', tabIndex: 0,
+        children: jsx(FindingSummary, { finding: f, onSection: choose }) }),
+      jsxs('section', { role: 'tabpanel', id: panelId('evidence'), 'aria-labelledby': tabId('evidence'), hidden: section !== 'evidence', tabIndex: 0, children: [
+        jsx(Block, { title: 'Evidence', children: jsx(Evidence, { finding: f }) }),
+        jsx(FindingReasoning, { finding: f }),
+        list(chains.chains).length || list(chains.broken).length
+          ? jsx(Fold, { title: 'Part of an attack chain', open: true, children: jsx(Chains, { chains }) }) : null,
+        jsxs(Fold, { title: 'Details', children: [
+          jsx('p', { children: `${tags.join(' · ') || 'Not categorized'} · confidence ${label(f.confidence?.level || f.confidence)}` }),
+          jsx(Bullets, { values: list(f.locations).map((loc) => `${locationText(loc)} (${loc.role || 'location'})`) })
+        ] })
+      ] }),
+      jsxs('section', { role: 'tabpanel', id: panelId('remediation'), 'aria-labelledby': tabId('remediation'), hidden: section !== 'remediation', tabIndex: 0, children: [
+        jsx(Remediation, { finding: f }),
+        jsx(Fault, { error: patch.error }),
+        patch.data?.content && !f.secret ? jsx(Fold, { title: 'Suggested patch (read-only)', open: true, children: jsx(PatchPreview, { content: patch.data.content }) }) : null
+      ] }),
+      jsxs(Fold, { title: f.triage?.note ? 'Note' : 'Add a note', children: [
+        jsx('div', { className: 'hs-q', children: jsx('textarea', { 'aria-label': 'Note', value: note, onChange: (e) => setNote(e.target.value), placeholder: 'Why this was fixed, accepted or dismissed…' }) }),
+        jsx('div', { className: 'hs-bar', children: jsx(Btn, { disabled: saving, onClick: saveNote, children: 'Save note' }) })
+      ] })
     ] })
   ] })
 }
@@ -1204,7 +1522,7 @@ export async function startChat(path, title, prompt) {
   await host.request('prompt.submit', { session_id: session.session_id, text: prompt })
   return session
 }
-export function FindingDetail({ id, onBack }) {
+export function FindingDetail({ id, onBack, nativeSelect = false }) {
   const q = useData(`/findings/${id}`)
   const [note, setNote] = useState('')
   const [chatError, setChatError] = useState(null)
@@ -1235,48 +1553,42 @@ export function FindingDetail({ id, onBack }) {
   const level = sevOf(f)
   const loc = list(f.locations)[0]
   const myChains = relevantChains(f.chains || chains.data, id)
-  const tags = [f.taxonomy?.category, ...list(f.taxonomy?.cwe), ...list(f.taxonomy?.owasp)].filter(Boolean)
-  return jsxs('div', { className: 'hs-pane', children: [
-    jsx(Back, { onBack }),
-    jsx(Loading, { query: q, children: q.data ? jsxs('div', { children: [
-      jsxs('div', { className: 'hs-head', children: [
-        jsxs('div', { className: 'hs-head-main', children: [
-          jsxs('div', { className: 'hs-item-top', children: [jsx(SevBadge, { level }), jsx('span', { className: 'hs-muted', children: label(f.evidenceState) })] }),
-          jsx('h2', { children: f.title || 'Finding' }),
-          jsx('p', { className: 'hs-loc', children: `${locationText(loc) || 'Location not recorded'} · ${repoName(root)}` })
+  return jsxs('div', { className: 'hs-pane hs-finding-pane', children: [
+    jsx(Fault, { error: q.error }),
+    q.isLoading ? jsx('p', { role: 'status', className: 'hs-muted', children: 'Loading…' }) : null,
+    q.data ? jsxs('div', { className: 'hs-finding-body', children: [
+      jsxs('header', { className: 'hs-finding-head', children: [
+        jsx(Back, { onBack }),
+        jsx('p', { className: 'hs-finding-repo hs-muted', title: root, children: repoName(root) }),
+        jsxs('div', { className: 'hs-row-meta', children: [
+          jsx(SevBadge, { level }), jsx(EvidenceState, { state: f.evidenceState }),
+          list(f.taxonomy?.cwe).length ? jsx('code', { className: 'hs-muted', children: f.taxonomy.cwe.join(' · ') }) : null
         ] }),
+        jsx('h2', { children: f.title || 'Finding' }),
+        jsxs('p', { className: 'hs-loc hs-muted', children: [jsx(Icon, { name: 'file' }), locationText(loc) || 'Location not recorded'] }),
         jsxs('div', { className: 'hs-actions', children: [
-          jsx('select', { className: 'hs-mini', 'aria-label': 'Finding status', value: triage, onChange: (e) => saveTriage(e.target.value),
-            children: Object.entries(TRIAGE).map(([v, t]) => jsx('option', { value: v, children: t }, v)) }),
-          jsx('button', { type: 'button', className: 'hs-cta', onClick: fix, children: 'Fix in chat' })
-        ] })
+          jsx(SelectField, { className: 'hs-mini', 'aria-label': 'Finding status', value: triage, disabled: action.isPending, native: nativeSelect,
+            onChange: (e) => saveTriage(e.target.value), children: Object.entries(TRIAGE).map(([v, t]) => jsx('option', { value: v, children: t }, v)) }),
+          jsxs('button', { type: 'button', className: 'hs-cta', onClick: fix, children: [jsx(Icon, { name: 'chat' }), 'Fix in chat'] })
+        ] }),
+        jsx(Fault, { error: action.error || chatError })
       ] }),
-      jsx(Fault, { error: action.error || chatError }),
-      has(f.severity?.rationale) ? jsx('p', { className: 'hs-muted', style: { margin: '0 0 18px' }, children: f.severity.rationale }) : null,
-      jsx(FindingSummary, { finding: f }),
-      list(myChains.chains).length || list(myChains.broken).length
-        ? jsx(Fold, { title: 'Part of an attack chain', children: jsx(Chains, { chains: myChains }) }) : null,
-      patch.data?.content && !f.secret ? jsx(Fold, { title: 'Suggested patch', children: jsx('pre', { tabIndex: 0, children: patch.data.content }) }) : null,
-      jsx(Fold, { title: f.triage?.note ? 'Note' : 'Add a note', children: [
-        jsx('div', { className: 'hs-q', children: jsx('textarea', { 'aria-label': 'Note', value: note, onChange: (e) => setNote(e.target.value), placeholder: 'Why this was fixed, accepted or dismissed…' }) }),
-        jsx('div', { className: 'hs-bar', children: jsx(Btn, { disabled: action.isPending, onClick: () => saveTriage(triage, note), children: 'Save note' }) })
-      ] }),
-      jsx(Fold, { title: 'Details', children: [
-        jsx('p', { children: `${tags.join(' · ') || 'Not categorized'} · confidence ${label(f.confidence?.level || f.confidence)}` }),
-        jsx(Bullets, { values: list(f.locations).map((l) => `${l.path}:${l.startLine}–${l.endLine} (${l.role || 'location'})`) })
-      ] })
-    ] }) : null })
+      jsx(FindingSections, { id, finding: f, patch, chains: myChains, note, setNote, saving: action.isPending, saveNote: () => saveTriage(triage, note) })
+    ] }) : null
   ] })
 }
-export function BrowserView({ kind, selected, setSelected, onFinding, newScan, setNewScan, preset = {} }) {
+export function BrowserView({ kind, selected, setSelected, onFinding, newScan, setNewScan, preset = {}, view = 'review' }) {
   const [filters, setFilters] = useState(kind === 'Findings' ? { q: '', status: 'open', severity: '', ...preset } : { q: '' })
   const [offset, setOffset] = useState(0)
+  const containerRef = useRef(null)
+  const table = kind === 'Findings' && view === 'table'
   const path = kind === 'Scans' ? '/scans' : '/findings'
   const q = useData(path, { ...filters, limit: PAGE_SIZE, offset })
   const rows = items(q.data)
   const set = (key) => (value) => {
     setFilters((old) => ({ ...old, [key]: value }))
     setOffset(0)
+    setSelected(null)
   }
   const empty = !q.isLoading && !q.error && !rows.length
   const noScansYet = kind === 'Scans' && empty && !filters.q
@@ -1284,62 +1596,83 @@ export function BrowserView({ kind, selected, setSelected, onFinding, newScan, s
   const firstId = kind === 'Scans' ? scanId(rows[0]) : findingId(rows[0])
   useEffect(() => {
     // Wide layouts open the first row instead of a blank detail pane.
-    const wide = typeof window === 'undefined' || !window.innerWidth || window.innerWidth > 900
-    if (!selected && !newScan && firstId && wide) setSelected(firstId)
-  }, [firstId])
+    const width = containerRef.current?.getBoundingClientRect().width
+    const wide = width ? width > 760 : typeof window === 'undefined' || window.innerWidth > 900
+    if (!table && !selected && !newScan && firstId && wide) setSelected(firstId)
+  }, [firstId, table])
   // Repositories come from scan history (latest scan per repository); folders from where findings are.
   const repos = useData('/repositories', { limit: 100, offset: 0 })
   const folders = useData('/finding-folders', filters.repo ? { repo: filters.repo } : {}, kind === 'Findings')
   const repoChoices = items(repos.data).filter((r) => r.repoKey)
   const scopeTools = [
     repoChoices.length > 1 || filters.repo
-      ? jsx('select', { className: 'hs-mini', 'aria-label': 'Repository', value: filters.repo || '',
-          onChange: (e) => { setFilters((old) => ({ ...old, repo: e.target.value, folder: '' })); setOffset(0) },
+      ? jsx(SelectField, { className: 'hs-mini', 'aria-label': 'Repository', value: filters.repo || '',
+          onChange: (e) => { setFilters((old) => ({ ...old, repo: e.target.value, folder: '' })); setOffset(0); setSelected(null) },
           children: [['', 'All repositories'], ...repoChoices.map((r) => [r.repoKey, repoName(r.root)])].map(([v, t]) =>
             jsx('option', { value: v, title: v, children: t }, v)) }, 'repo')
       : null,
     kind === 'Findings' && (items(folders.data).length || filters.folder)
-      ? jsx('select', { className: 'hs-mini', 'aria-label': 'Folder', value: filters.folder || '', onChange: (e) => set('folder')(e.target.value),
+      ? jsx(SelectField, { className: 'hs-mini', 'aria-label': 'Folder', value: filters.folder || '', onChange: (e) => set('folder')(e.target.value),
           children: [['', 'All folders'], ...items(folders.data).map((f) => [f.folder, `${f.folder}/ (${f.count})`])].map(([v, t]) =>
             jsx('option', { value: v, children: t }, v)) }, 'folder')
       : null
   ].filter(Boolean)
   const findingsTools = kind === 'Findings'
     ? [
-        jsx('select', { className: 'hs-mini', 'aria-label': 'Severity', value: filters.severity || '', onChange: (e) => set('severity')(e.target.value),
+        jsx(SelectField, { className: 'hs-mini', 'aria-label': 'Severity', value: filters.severity || '', onChange: (e) => set('severity')(e.target.value),
           children: [['', 'Any severity'], ...SEVERITIES.map((s) => [s, s[0].toUpperCase() + s.slice(1)])].map(([v, t]) => jsx('option', { value: v, children: t }, v)) }, 'sev'),
-        jsx('select', { className: 'hs-mini', 'aria-label': 'Status', value: filters.status || '', onChange: (e) => set('status')(e.target.value),
-          children: [['', 'Any status'], ...Object.entries(TRIAGE)].map(([v, t]) => jsx('option', { value: v, children: t }, v)) }, 'status')
+        jsx(SelectField, { className: 'hs-mini', 'aria-label': 'Status', value: filters.status || '', onChange: (e) => set('status')(e.target.value),
+          children: [['', 'Any status'], ...Object.entries(TRIAGE)].map(([v, t]) => jsx('option', { value: v, children: t }, v)) }, 'status'),
+          jsx(SelectField, { className: 'hs-mini', 'aria-label': 'Evidence', value: filters.evidenceState || '', onChange: (e) => set('evidenceState')(e.target.value),
+          children: [['', 'Any evidence'], ...Object.entries(EVIDENCE_LABELS)].map(([v, t]) => jsx('option', { value: v, children: t }, v)) }, 'evidence')
       ]
     : []
+  const filtered = !!(filters.q || filters.repo || filters.folder || filters.severity || filters.evidenceState || (kind === 'Findings' && filters.status !== 'open'))
+  const clearFilters = () => {
+    setFilters(kind === 'Findings' ? { q: '', status: 'open', severity: '' } : { q: '' })
+    setOffset(0)
+    setSelected(null)
+  }
+  const tools = jsxs('div', { className: 'hs-tools', children: [
+    jsxs('label', { className: 'hs-find', children: [
+      jsx(Icon, { name: 'search' }),
+      jsx('input', { type: 'search', 'aria-label': `Search ${kind.toLowerCase()}`, placeholder: 'Search findings or files…', value: filters.q, onChange: (e) => set('q')(e.target.value) })
+    ] }),
+    ...scopeTools, ...findingsTools
+  ] })
+  const count = jsxs('div', { className: 'hs-result-count', children: [
+    jsx('span', { role: 'status', 'aria-live': 'polite', children: q.isLoading ? 'Loading…'
+      : q.error ? 'Results unavailable' : Number.isFinite(q.data?.total) ? `${q.data.total} ${kind.toLowerCase()}` : `${rows.length} loaded` }),
+    kind === 'Findings' ? jsx('span', { className: 'hs-muted', children: 'Severity first' }) : null,
+    filtered ? jsx('button', { type: 'button', className: 'hs-link', onClick: clearFilters, children: 'Clear filters' }) : null
+  ] })
+  if (table) return jsxs('div', { className: 'hs-table-view', ref: containerRef, children: [
+    tools, count, jsx(Fault, { error: q.error }),
+    jsx(FindingsTable, { rows, selected, onSelect: setSelected }),
+    empty ? jsx('p', { className: 'hs-table-empty hs-muted', children: filtered ? 'No findings match. Clear filters to see all open findings.' : 'No findings yet.' }) : null,
+    jsx(Pager, { offset, setOffset, data: q.data }),
+    selected ? jsx(FindingDrawer, { id: selected, onClose: () => setSelected(null) }, selected) : null
+  ] })
   const emptyDetail = kind === 'Scans'
     ? jsx('div', { className: 'hs-empty', children: jsx('p', { children: 'Pick a scan, or start a new one.' }) })
     : rows.length
       ? jsx('div', { className: 'hs-empty', children: jsx('p', { children: 'Pick a finding to see what to fix.' }) })
       : jsxs('div', { className: 'hs-empty', children: [
           jsx('span', { className: 'hs-mark', children: jsx(Icon, { name: 'shield' }) }),
-          jsx('h3', { children: filters.status === 'open' && !filters.q && !filters.severity ? 'Nothing to fix right now' : 'No findings match' }),
+          jsx('h3', { children: !filtered ? 'Nothing to fix right now' : 'No findings match' }),
           jsx('p', { children: 'Findings from your scans show up here, worst first.' }),
           jsx('button', { type: 'button', className: 'hs-cta', onClick: () => onFinding?.newScan?.(), children: 'New scan' })
         ] })
-  return jsxs('div', { className: 'hs-split', 'data-selected': !!(selected || newScan), children: [
+  return jsxs('div', { className: 'hs-split', ref: containerRef, 'data-kind': kind.toLowerCase(), 'data-selected': !!(selected || newScan), children: [
     jsxs('aside', { className: 'hs-list', 'aria-label': `${kind} list`, children: [
-      jsxs('div', { className: 'hs-tools', children: [
-        jsxs('label', { className: 'hs-find', children: [
-          jsx(Icon, { name: 'search' }),
-          jsx('input', { type: 'search', 'aria-label': `Search ${kind.toLowerCase()}`, placeholder: 'Search', value: filters.q, onChange: (e) => set('q')(e.target.value) })
-        ] }),
-        ...findingsTools,
-        ...scopeTools
-      ] }),
-      jsx(Fault, { error: q.error }),
+      tools, count, jsx(Fault, { error: q.error }),
       jsxs('div', { className: 'hs-list-body', children: [
         ...rows.map((row) => kind === 'Scans'
           ? jsx(ScanRow, { row, selected: scanId(row) === selected && !newScan, onSelect: (id) => { setNewScan(false); setSelected(id) } }, scanId(row))
           : jsx(FindingRow, { row, selected: findingId(row) === selected, onSelect: setSelected }, findingId(row))),
-        empty ? jsx('p', { className: 'hs-muted', style: { padding: '12px 16px' }, children: noScansYet ? 'No scans yet.' : 'Nothing here.' }) : null,
-        jsx(Pager, { offset, setOffset, data: q.data })
-      ] })
+        empty ? jsx('p', { className: 'hs-muted', style: { padding: '12px 16px' }, children: noScansYet ? 'No scans yet.' : 'No findings match.' }) : null
+      ] }),
+      jsx(Pager, { offset, setOffset, data: q.data })
     ] }),
     jsx('main', { className: 'hs-detail', 'aria-label': `${kind} detail`, children:
       kind === 'Scans' && showNew
@@ -1362,6 +1695,7 @@ function ScopedSecurityPage({ profile }) {
   const [selected, setSelected] = useState(null)
   const [newScan, setNewScan] = useState(false)
   const [preset, setPreset] = useState({})
+  const [view, setView] = useState('review')
   const summary = useData('/summary')
   const open = summary.data?.open || {}
   const openTotal = SEVERITIES.reduce((n, s) => n + (open[s] || 0), 0)
@@ -1400,9 +1734,13 @@ function ScopedSecurityPage({ profile }) {
           children: [jsx('span', { className: 'hs-sq' }), jsx('b', { children: open[s] }), sevName(s)] }, s)) }),
       jsxs('button', { type: 'button', className: 'hs-cta', onClick: navigate.newScan, children: [jsx(Icon, { name: 'plus' }), 'New scan'] })
     ] }),
-    jsx('nav', { className: 'hs-nav', role: 'tablist', 'aria-label': 'Security views', children: [['Findings', openTotal], ['Scans', scanTotal]].map(([name, n]) =>
-      jsxs('button', { type: 'button', role: 'tab', 'aria-selected': tab === name, onClick: () => selectTab(name), children: [name, n ? jsx('span', { children: n }) : null] }, name)) }),
-    jsx(BrowserView, { kind: tab, selected, setSelected, onFinding: navigate, newScan, setNewScan, preset }, `${profile}:${tab}:${JSON.stringify(preset)}`)
+    jsxs('div', { className: 'hs-viewbar', children: [
+      jsx('nav', { className: 'hs-nav', role: 'tablist', 'aria-label': 'Security views', children: [['Findings', openTotal], ['Scans', scanTotal]].map(([name, n]) =>
+        jsxs('button', { type: 'button', role: 'tab', 'aria-selected': tab === name, onClick: () => selectTab(name), children: [name, n ? jsx('span', { children: n }) : null] }, name)) }),
+      tab === 'Findings' ? jsx('div', { className: 'hs-view-switch', role: 'group', 'aria-label': 'Findings layout', children: [['review', 'Review'], ['table', 'Table']].map(([value, title]) =>
+        jsx('button', { type: 'button', 'aria-pressed': view === value, onClick: () => { setView(value); setSelected(null) }, children: title }, value)) }) : null
+    ] }),
+    jsx(BrowserView, { kind: tab, selected, setSelected, onFinding: navigate, newScan, setNewScan, preset, view }, `${profile}:${tab}:${JSON.stringify(preset)}`)
   ] })
 }
 export default {

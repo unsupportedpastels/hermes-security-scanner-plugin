@@ -48,6 +48,12 @@ Enable the Desktop plugin explicitly in the app (its metadata must use
 `defaultEnabled: false`). Keep the Python plugin installed for the dashboard API.
 On a remote host, repository paths refer to that host, not the client computer.
 
+The **Findings** page offers a **Review** workspace and a full-width **Table**
+view. Both retain the same search, repository, folder, severity, status, and
+evidence filters. Findings are sorted by severity before pagination. Open a
+finding for its Overview, Evidence, or Remediation; proof gaps and counter-evidence
+remain separate from severity, and suggested patches are read-only.
+
 ## Interfaces
 
 Agent tools in the `security` toolset:
