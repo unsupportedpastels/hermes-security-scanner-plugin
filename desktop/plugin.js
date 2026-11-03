@@ -340,7 +340,12 @@ details.hs-fold[open]>summary{margin-bottom:8px;border-bottom:1px solid var(--ui
 .hs-workbench .hs-native-select{appearance:none;-webkit-appearance:none;padding:0 34px 0 10px;text-overflow:ellipsis}
 .hs-workbench .hs-select-trigger{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:0 10px;box-shadow:none}
 .hs-select-trigger>[data-slot=select-value]{min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left}
-.hs-select-trigger>.codicon{flex:none;font-size:16px}.hs-select-chevron{position:absolute;right:10px;top:50%;transform:translateY(-50%);width:16px;height:16px;color:var(--ui-text-secondary);pointer-events:none}
+.hs-select-trigger>.codicon{flex:none;font-size:16px}
+.hs-select-trigger>[aria-hidden=true]{display:inline-block;transform:rotate(-90deg);transform-origin:center}
+.hs-select-trigger[data-state=open]>[aria-hidden=true]{transform:rotate(0deg)}
+.hs-select-chevron{position:absolute;right:10px;top:50%;transform:translateY(-50%) rotate(-90deg);width:16px;height:16px;color:var(--ui-text-secondary);pointer-events:none}
+/* Native popup visibility is not focus: Escape/selection can close a focused select. */
+.hs-native-select:open+.hs-select-chevron{transform:translateY(-50%) rotate(0deg)}
 .hs-workbench .hs-native-select:hover,.hs-workbench .hs-select-trigger:hover{border-color:var(--ui-text-tertiary)}
 .hs-workbench .hs-native-select:disabled,.hs-workbench .hs-select-trigger:disabled{opacity:.5;cursor:default}
 .hs-workbench .hs-q>.hs-select{width:100%}.hs-native-select option{color:var(--foreground);background:var(--background)}
