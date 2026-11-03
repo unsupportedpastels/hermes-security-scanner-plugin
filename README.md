@@ -1,5 +1,7 @@
 # hermes-security
 
+![hermes-security](docs/images/banner.png)
+
 hermes-security is a Hermes plugin that reviews a repository for security bugs.
 It keeps each finding together with its evidence, any test results, and a record
 of which code was actually read. Reports separate findings backed by the code
