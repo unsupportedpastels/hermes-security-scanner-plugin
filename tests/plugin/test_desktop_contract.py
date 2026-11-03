@@ -38,3 +38,29 @@ def test_backend_route_builders_are_bounded():
         assert action in text
     assert 'assertBackendPath(path)' in text
     assert 'dangerouslySetInnerHTML' not in text
+
+
+def _css_rule(selector):
+    text = SOURCE.read_text()
+    match = re.search(re.escape(selector) + r'\{([^}]+)\}', text)
+    assert match, f'Missing state rule: {selector}'
+    return match.group(1)
+
+
+def test_shared_dropdown_chevrons_follow_real_menu_state():
+    assert 'rotate(-90deg)' in _css_rule('.hs-select-trigger>[aria-hidden=true]')
+    assert 'rotate(0deg)' in _css_rule('.hs-select-trigger[data-state=open]>[aria-hidden=true]')
+
+
+def test_native_dropdown_chevrons_follow_popup_state_not_focus():
+    assert 'translateY(-50%) rotate(-90deg)' in _css_rule('.hs-select-chevron')
+    assert 'translateY(-50%) rotate(0deg)' in _css_rule('.hs-native-select:open+.hs-select-chevron')
+    text = SOURCE.read_text()
+    assert not re.search(r'[^{}]*:focus[^{}]*\{[^}]*rotate\(', text)
+    # Every filter, triage and setup select must go through the same component.
+    assert len(re.findall(r"(?:jsx|jsxs)\('select',", text)) == 1
+
+
+def test_disclosure_chevrons_keep_the_same_closed_and_open_directions():
+    assert 'rotate(-90deg)' in _css_rule('.hs-fold-chevron')
+    assert 'rotate(0)' in _css_rule('details.hs-fold[open]>summary>.hs-fold-chevron')
