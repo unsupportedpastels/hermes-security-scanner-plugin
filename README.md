@@ -1,28 +1,34 @@
 # hermes-security
 
-A Hermes plugin for reviewing local repositories and keeping findings, evidence,
-validation receipts, and coverage together. Standard, Deep, and Diff review modes
-share a Python/SQLite core. Reports distinguish code-supported findings from
-issues confirmed by a test, and keep rejected or inconclusive candidates visible.
+hermes-security is a Hermes plugin that reviews a repository for security bugs.
+It keeps each finding together with its evidence, any test results, and a record
+of which code was actually read. Reports separate findings backed by the code
+from findings confirmed by a test. Rejected and inconclusive candidates stay in
+the report so you can see what was ruled out and why.
 
-`docs/CONTRACT.md` defines the implementation contract.
+## Install
 
-## Install from GitHub
-
-Requires Python 3.11+ and Hermes 0.21.5 or later.
+You need Hermes 0.21.5 or later and Python 3.11 or later.
 
 ```sh
 hermes plugins install unsupportedpastels/hermes-security-scanner-plugin --enable
 ```
 
-Restart Hermes afterwards. To update later, run the same command with `--force`.
-For the Desktop workbench, copy the installed plugin's `desktop/` folder as
-described below, using `$HERMES_HOME/plugins/hermes-security` as the source path.
+Restart Hermes afterwards. To update, run the same command with `--force`.
 
-## Install from a local checkout
+The plugin also has a **Security** page for Hermes Desktop. Desktop finds it in
+the installed package on its own. Like every Desktop plugin, it starts turned
+off: switch it on under **Capabilities → Plugins**. The page needs the Python
+plugin to stay installed and enabled, because that is where its data comes from.
 
-Requires Python 3.11+ and Hermes 0.21.5 or later. The Python core uses only the
-standard library. Choose the intended profile's `HERMES_HOME` first.
+If Desktop connects to Hermes on another machine, install through the Desktop
+install dialog so it can fetch the page as well. A plugin installed only on
+the remote machine shows its page as "unavailable (remote backend)". Repository
+paths always refer to the machine running Hermes, not the one running Desktop.
+
+### Installing from a local checkout
+
+Pick the profile first, then link the checkout into its plugins folder:
 
 ```sh
 export HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}"
@@ -31,32 +37,155 @@ ln -s /absolute/path/to/hermes-security "$HERMES_HOME/plugins/hermes-security"
 hermes plugins enable hermes-security
 ```
 
-Restart Hermes after enabling. Do not overwrite an existing installation without
-checking where it points. The native manifest uses JSON syntax (valid YAML).
-Commands are registered in Python; this Hermes manifest format has no command,
-dashboard, or desktop declaration keys.
+Restart Hermes after enabling it. If `$HERMES_HOME/plugins/hermes-security`
+already exists, check what it points to before replacing it. With a linked
+checkout, Desktop reloads the Security page whenever `desktop/plugin.js`
+changes.
 
-The optional Desktop workbench is a separate, opt-in half. Once
-`desktop/plugin.js` and `dashboard/manifest.json` are available:
+## Running a scan
 
-```sh
-mkdir -p "$HERMES_HOME/desktop-plugins/hermes-security"
-cp -R /absolute/path/to/hermes-security/desktop/. "$HERMES_HOME/desktop-plugins/hermes-security/"
+In chat, ask something like "scan this repo for security issues". Or open the
+**Security** page in Desktop, choose **New scan**, and fill in:
+
+1. **Repository:** a folder on the machine running Hermes. Pick a recent one,
+   use **Browse…**, or clone one with **From URL…**.
+2. **What to scan:** **Whole codebase** or **Only my changes**. Only my changes
+   means your uncommitted work, or your branch compared with the default branch.
+   The plugin picks whichever applies.
+3. **Scan area** (whole codebase only): the entire codebase, or one folder.
+4. **Deep scan** (optional): slower, and looks harder for subtle issues.
+5. **Run tests to confirm findings** (optional): the agent writes small
+   reproductions and runs them with your usual toolchain, in a temporary copy
+   of the repository.
+6. **Model** (optional): the model for the scan's chat. It defaults to the one
+   your chats use.
+7. **Subagents** (optional): shown when the advanced-delegation plugin is
+   enabled. It picks the model route or Hermes profile every reviewer runs on.
+8. **Additional context** (optional): what the app does, what worries you, and
+   where to look first.
+
+Press **Start scan**. If the scan can't start in the background, a chat message
+is drafted for you to send instead.
+
+The agent first works out what an attacker could reach and which inputs are
+trusted. Then it reviews the code, checks each candidate against the code (and
+with tests, if you allowed them), and traces whether an attacker can actually
+reach it. You don't need to install a scanner, because the review is done by the
+model. Vendored code, symlinks, special files, and files over 8 MB are skipped,
+and the report lists them.
+
+The work is split by folder into chunks of about 4,000 lines, roughly what one
+reviewer can read at once. One more reviewer looks across the whole scope for
+entry points and trust boundaries. Up to 10 reviewers run at the same time.
+
+### Standard and deep scans
+
+A standard scan reads production code: source, config, CI, infrastructure as
+code, and migrations. It skips tests, fixtures, docs, examples, translations,
+generated files, assets, and lockfiles, unless one of them contains a committed
+secret. Everything it skips appears in the report with the reason.
+
+If the production code fits in 90 chunks (about 360,000 lines), all of it is
+read. In a bigger repository, files are ranked by what the code does (routes, request
+input, shell commands, SQL, deserialization, auth, webhooks) and how often it
+does it. The riskiest files are read first until the budget runs out.
+Developer tooling such as scripts and evals ranks lower. Up to two of the
+riskiest chunks also get a second, independent reviewer.
+
+If a reviewer can't finish its files, they go to a new reviewer. This repeats
+for up to six rounds, as long as each round makes progress. The plan is saved
+when the scan starts, so updating the plugin never reshuffles a running scan.
+
+A deep scan skips none of those files and makes independent passes over the
+whole repository, three by default.
+
+### Dependency check
+
+Before the review starts, the scan checks your lockfiles against published
+advisories using Google's [osv-scanner](https://github.com/google/osv-scanner).
+It also checks declared runtime versions (Node, Python, Go, PHP, Ruby) against
+endoflife.date.
+
+On the first scan, the plugin downloads a pinned osv-scanner release from
+GitHub (about 55 MB). It checks the file's SHA-256 against the pin, refuses it
+if they differ, and keeps it in the plugin's data folder. Package names and
+versions are sent to api.osv.dev, and to api.deps.dev for manifests that have no
+lockfile.
+
+An advisory alone doesn't produce a finding. A finding is reported only when
+the review shows your code reaches the vulnerable behavior. If the check can't
+run, the report says so and marks the scan as partial.
+
+To turn the check off, set `HERMES_SECURITY_DEPENDENCY_CHECK=off`. If your
+network blocks GitHub, ask an admin to install osv-scanner and set
+`HERMES_SECURITY_OSV_SCANNER` to its path.
+
+### If a scan stops partway
+
+The plugin keeps track of where every scan is. Your next message, or
+**Continue scan** on the scan's page, picks up at the right step. That means
+starting any reviews that have no saved result, checking candidates, tracing
+attack paths, and finishing the report. If a reviewer ends without saving its
+result, its work is handed out again.
+
+The plugin can also continue a scan by itself. When a chat turn ends and the
+scan still has work left, the plugin sends one "Continue security scan" message
+to that chat. It never does this after you press Stop. After three automatic
+continues with no progress, it pauses the scan and marks it as needing
+attention until you continue it yourself.
+
+Because this lets the plugin send messages into your chat, you have to switch
+it on once:
+
+```bash
+hermes config set plugins.entries.hermes-security.allow_gateway_injection true
 ```
 
-Enable the Desktop plugin explicitly in the app (its metadata must use
-`defaultEnabled: false`). Keep the Python plugin installed for the dashboard API.
-On a remote host, repository paths refer to that host, not the client computer.
+Without that setting, a stalled scan is marked as unable to continue on its own
+and waits for **Continue scan** or a message from you. A turn that fails with a
+model provider error doesn't trigger an automatic continue; send any message to
+resume.
 
-The **Findings** page offers a **Review** workspace and a full-width **Table**
-view. Both retain the same search, repository, folder, severity, status, and
-evidence filters. Findings are sorted by severity before pagination. Open a
-finding for its Overview, Evidence, or Remediation; proof gaps and counter-evidence
-remain separate from severity, and suggested patches are read-only.
+### Testing a running app (optional)
 
-## Interfaces
+On an open scan, enter the app's address under **Confirming findings** and
+click **Allow testing this app**. You can also run
+`/security authorize-validation <scan> <origin>`. For the next hour, the agent
+may then send up to 200 requests to that exact address. It follows redirects
+within the same site and never to other sites. **Stop** cancels the permission
+early.
 
-Agent tools in the `security` toolset:
+## Safety
+
+- Repository text is treated as data, never as instructions to the agent.
+- Secrets are never stored. Reports keep only the secret's type, its location,
+  and a one-way fingerprint.
+- Git hooks and filters never run.
+- Every finding quotes the exact code from the scanned snapshot.
+- Finished reports are sealed, and later triage doesn't change them.
+
+Tests run as your user, in a temporary copy, with environment variables that
+look like credentials removed. That is a convenience, not a sandbox, so only
+allow tests on code you trust.
+
+A finding is marked "Confirmed by test" only when its test passes and a matching
+negative test behaves as expected. A test that never ran is recorded as
+`NOT_RUN` and counts as no proof either way.
+
+## Reviewing findings
+
+The **Findings** page has a **Review** layout and a full-width **Table** layout.
+Both use the same filters: search, repository, folder, severity, status, and
+evidence. Findings are sorted by severity. Each finding has **Overview**,
+**Evidence**, and **Remediation** tabs. Gaps in the proof and counter-evidence
+are shown separately from the severity. Suggested patches are shown for reading
+only; the plugin never applies them.
+
+Reports export as Markdown, JSON, CSV, and SARIF.
+
+## Tools and commands
+
+The agent gets these tools in the `security` toolset:
 
 - `security_scan_start`
 - `security_scan_get`
@@ -68,134 +197,56 @@ Agent tools in the `security` toolset:
 - `security_scan_cancel`
 - `security_scan_export`
 
-The `/security` slash command supports `status`,
-`authorize-validation <scan> <origin>`, and `revoke <grant>`. Agent tools cannot
-give themselves permission to test a running app.
+The `/security` chat command supports `status`,
+`authorize-validation <scan> <origin>`, `revoke <grant>`, and `help`. Only you
+can allow testing of a running app. The agent's tools can't grant that
+permission.
 
-The service also exposes `hermes security-review ...` and
-`python -m hermes_security ...` for terminal and subagent use. Consult their
-`--help` output once the service is installed for available subcommands.
-Exports include Markdown, JSON, CSV, and SARIF.
-
-## Running a scan
-
-In chat, just ask: *"scan this repo for security issues"*. Or choose **+ Scan** on
-the Desktop **Security** page and fill in:
-
-1. **Repository folder** — a folder on the computer running Hermes.
-2. **What to scan** — **Full codebase** or **Recent changes** (uncommitted work, or
-   your branch against the default branch; picked automatically).
-3. **Deep scan** (optional) — slower, more thorough full-codebase passes.
-4. **Run tests to confirm findings** (optional) — the agent writes and runs small
-   reproductions with your normal toolchain, in a temporary copy of the repo.
-5. **Only this folder** and **Extra context** (both optional).
-
-Press **Start scan**; a ready-to-send chat draft opens. The agent builds a threat
-model, reviews the in-scope code (see Standard vs deep below), checks each candidate against the code (and
-with tests, if allowed), then traces whether an attacker can reach it. There is
-nothing to install: the review is model reasoning. Vendored code, links, special
-files and files over 8 MB are skipped and listed in the report.
-
-The work is split by folder into packets of about 4k lines, roughly what one
-reviewer reads in a single context, plus one baseline reviewer that maps entry
-points and trust boundaries over the whole scope. Up to 10 reviewers run at once.
-
-**Standard vs deep.** A standard scan reviews production code (source, config,
-CI, IaC, migrations) and skips tests, fixtures, docs, examples, translations,
-generated files, assets and lockfiles, unless one of them holds a committed
-secret. Production code that fits in 90 packets (about 360k lines) is read in
-full. In a larger repository, files are ranked by what the code does (routes,
-request input, exec, SQL, deserialization, auth, webhooks) and how often, and
-the riskiest are read first within that budget; developer tooling such as
-scripts and evals ranks lower. At most two of the riskiest packets get a second
-independent reviewer. Files a reviewer could not finish go to fresh reviewers,
-round after round while each round makes progress (up to six rounds). The plan is
-saved when the scan starts, so a plugin update never reshuffles a running scan.
-Everything a standard scan skips is listed in the report as excluded by design,
-with a reason. A deep scan runs independent whole-repository passes (three by
-default) without the standard skips.
-
-**Dependency check:** before the review starts, the scan checks your lockfiles
-against published advisories with Google's
-[osv-scanner](https://github.com/google/osv-scanner) and checks declared runtime
-versions (Node, Python, Go, PHP, Ruby) against endoflife.date. The first scan
-downloads a pinned osv-scanner release from GitHub, about 55 MB, refuses it unless
-its SHA-256 matches the pin, and keeps it in the plugin's data folder. Package
-names and versions are sent to api.osv.dev (and api.deps.dev for manifests
-without a lockfile). Advisories are leads: a finding is reported only when the
-review shows your code reaches the vulnerable behaviour. If the check cannot
-run, the report says so and the scan is marked partial. To turn it off, set
-`HERMES_SECURITY_DEPENDENCY_CHECK=off`. Networks that block GitHub can point
-`HERMES_SECURITY_OSV_SCANNER` at an osv-scanner binary installed by an admin.
-
-**If a scan stops halfway:** the plugin remembers where every scan is, so a new
-turn (or **Continue scan** on the scan's page) picks up at the right step:
-start the review packets that have no saved result, check the candidates, trace
-attack paths, then finish. A reviewer that ends without saving its result is
-handed out again.
-
-It can also continue on its own. When a chat turn ends and its scan still has
-work to do, the plugin queues one "Continue security scan" message in that chat.
-It never does this after you press Stop, and after 3 continues that make no
-progress it pauses and shows **Paused — needs attention** until you continue it.
-This needs a one-time switch, because it lets the plugin send messages into your
-chat:
-
-```bash
-hermes config set plugins.entries.hermes-security.allow_gateway_injection true
-```
-
-Without it, a stalled scan shows **Paused — could not continue automatically**
-and waits for **Continue scan** or a message from you. A turn that fails with a
-model provider error does not trigger a continue; send any message to resume.
-
-**Testing a running app (optional):** on an open scan, enter its address under
-**Confirming findings** and click **Allow testing this app** (or run
-`/security authorize-validation <scan> <origin>`). The agent may then send up to 200
-requests to that exact address for an hour; same-site redirects are followed,
-other sites never are. **Stop** revokes it.
-
-What stays in place: repository text is treated as data, never instructions;
-secrets are redacted to a fingerprint; Git hooks/filters never run; findings cite
-exact code from the snapshot; finished reports are sealed. Tests run as you, in a
-temporary copy, with credential-looking environment variables removed — that is
-convenience, not a sandbox, so only enable tests for code you trust.
-
-A finding becomes "Confirmed by test" only with a passing test and a matching
-negative control. Unrun tests are `NOT_RUN`, not proof.
-
-CLI equivalent: `python -m hermes_security start --path <repo> [--mode diff|deep] [--tests] [--context ...]`.
-
-## Data and limitations
-
-Scan state and artifacts stay under the active profile's
-`$HERMES_HOME/plugin-data/agent-plugin-hermes-security-974429e7` (Hermes's
-`ctx.state.data_dir`; the dashboard and standalone CLI resolve the same folder).
-`python -m hermes_security data-dir` prints it.
-There is no hosted findings service or automatic ticket publication. Exports
-are user-controlled. Local storage does **not** mean model analysis stays on
-this computer: Hermes's configured provider may receive review context.
-
-Secret values must not be stored in evidence or logs; only their type, location,
-and one-way fingerprint are retained. Treat reports as sensitive regardless.
-Sealed artifacts are immutable; local triage does not rewrite sealed evidence.
-
-Incomplete worker results and unreviewed code produce gaps.
-Zero findings with partial coverage is not a clean bill of health. OWASP Top
-10:2025 and ASVS 5.0.0 mappings record review coverage, not certification.
-Model review can miss issues or misread code; verify conclusions and assumptions.
-Deep work is bounded and resumable, not guaranteed to run through host restarts.
-
-## Development and provenance
+From a terminal, use `hermes security-review ...` or
+`python -m hermes_security ...`. Run either with `--help` to list the
+subcommands. For example:
 
 ```sh
-python -m pytest tests/plugin/test_manifest.py -q
-python scripts/provenance.py
-python scripts/provenance.py --check
-hermes plugins validate .
+python -m hermes_security start --path <repo> [--mode diff|deep] [--tests] [--context ...]
 ```
 
-Provenance regeneration needs the pinned upstream checkout. Use
-`--source-root /path/to/upstream-checkout` to override the default.
-Run regeneration after adapting a file, and `--check` before accepting changes.
-See `LICENSE`, `NOTICE`, and `THIRD_PARTY_NOTICES.md` for legal attribution.
+## Data and limits
+
+Scans and reports are stored in the active profile at
+`$HERMES_HOME/plugin-data/agent-plugin-hermes-security-974429e7`.
+`python -m hermes_security data-dir` prints the exact path. Nothing is uploaded
+to a findings service or ticket system, and exports go only where you save them.
+
+Storing data locally doesn't keep the analysis local. The model provider
+configured in Hermes receives the code it is asked to review. Treat reports as
+sensitive.
+
+Keep these limits in mind:
+
+- Code that wasn't reviewed, and reviewers that didn't return a result, show up
+  as gaps in coverage. Zero findings with partial coverage doesn't mean the code
+  is clean.
+- The OWASP Top 10:2025 and ASVS 5.0.0 mappings show what was reviewed. They
+  are not a certification.
+- The model can miss issues or misread code, so check its conclusions.
+- Deep scans have a fixed budget and can be resumed, but a scan isn't
+  guaranteed to keep running through a Hermes restart.
+
+## Development
+
+```sh
+python -m pytest
+hermes plugins validate .
+hermes plugins doctor .
+python scripts/provenance.py --check
+```
+
+`docs/CONTRACT.md` describes the implementation contract.
+
+Some files are adapted from an upstream project, and
+`UPSTREAM_PROVENANCE.json` records where each one came from. After changing an
+adapted file, run `python scripts/provenance.py` to regenerate it, then
+`--check` to confirm. Both need a full checkout of the pinned upstream
+revision. Pass its location with `--source-root` or `HERMES_SECURITY_UPSTREAM`.
+
+See `LICENSE`, `NOTICE`, and `THIRD_PARTY_NOTICES.md` for attribution.
